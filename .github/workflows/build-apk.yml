@@ -1,0 +1,212 @@
+name: Arbeitszeit 30 APK bauen
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Android SDK installieren
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Android-Projekt anlegen
+        shell: bash
+        run: |
+          mkdir -p .
+          cat > settings.gradle <<'END_settings_gradle'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = 'Arbeitszeit30'
+          include ':app'
+          END_settings_gradle
+          mkdir -p .
+          cat > build.gradle <<'END_build_gradle'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          END_build_gradle
+          mkdir -p app
+          cat > app/build.gradle <<'END_app_build_gradle'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'at.arbeitszeit.zeitkonto'
+              compileSdk 35
+              defaultConfig {
+                  applicationId 'at.arbeitszeit.zeitkonto'
+                  minSdk 26
+                  targetSdk 34
+                  versionCode 15
+                  versionName '1.5.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          END_app_build_gradle
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'END_app_src_main_AndroidManifest_xml'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <application android:label="Arbeitszeit 30"
+                  android:allowBackup="false" android:usesCleartextTraffic="false"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                  <activity android:name="at.arbeitszeit.zeitkonto.MainActivity"
+                      android:exported="true" android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          END_app_src_main_AndroidManifest_xml
+          mkdir -p app/src/main/java/at/arbeitszeit/zeitkonto
+          cat > app/src/main/java/at/arbeitszeit/zeitkonto/MainActivity.java <<'END_app_src_main_java_at_arbeitszeit_zeitkonto_MainActivity_java'
+          package at.arbeitszeit.zeitkonto;
+
+          import android.app.Activity;
+          import android.graphics.Color;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.view.ViewGroup;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.widget.Button;
+          import android.widget.EditText;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+          import android.widget.Toast;
+          import java.net.URI;
+
+          public class MainActivity extends Activity {
+              private LinearLayout layout;
+              private WebView web;
+              private String base;
+
+              @Override public void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  layout = new LinearLayout(this);
+                  layout.setOrientation(LinearLayout.VERTICAL);
+                  layout.setPadding(16, 24, 16, 8);
+                  setContentView(layout);
+                  String saved = getPreferences(MODE_PRIVATE).getString("server", "");
+                  if (valid(saved)) open(saved); else setup(saved);
+              }
+
+              private boolean valid(String value) {
+                  try {
+                      URI u = new URI(value.trim());
+                      String p = u.getRawPath();
+                      return "https".equalsIgnoreCase(u.getScheme()) && u.getHost() != null
+                          && u.getRawUserInfo() == null && u.getRawQuery() == null
+                          && u.getRawFragment() == null && (p == null || p.isEmpty() || p.equals("/"))
+                          && u.getPort() != 0 && u.getPort() <= 65535;
+                  } catch (Exception e) { return false; }
+              }
+
+              private void clear() {
+                  if (web != null) { web.stopLoading(); layout.removeView(web); web.destroy(); web = null; }
+                  layout.removeAllViews();
+              }
+
+              private void setup(String initial) {
+                  clear();
+                  TextView title = new TextView(this);
+                  title.setText("Arbeitszeit 30\nServer einrichten");
+                  title.setTextSize(24);
+                  title.setTextColor(Color.rgb(18, 42, 75));
+                  layout.addView(title);
+                  EditText input = new EditText(this);
+                  input.setSingleLine(true);
+                  input.setHint("https://arbeitszeit.beispiel.at");
+                  input.setText(initial);
+                  layout.addView(input);
+                  Button go = new Button(this);
+                  go.setText("Verbinden");
+                  layout.addView(go);
+                  TextView info = new TextView(this);
+                  info.setText("Erforderlich: zentraler HTTPS-Arbeitszeitserver. " +
+                      "Ohne diesen ist die Stempeluhr noch nicht nutzbar.");
+                  layout.addView(info);
+                  go.setOnClickListener(v -> {
+                      String url = input.getText().toString().trim();
+                      if (!valid(url)) { input.setError("Gültige HTTPS-Adresse ohne Pfad erforderlich"); return; }
+                      getPreferences(MODE_PRIVATE).edit().putString("server", url).apply();
+                      open(url);
+                  });
+              }
+
+              private boolean sameServer(Uri url) {
+                  try {
+                      URI u = new URI(base);
+                      int p = u.getPort() == -1 ? 443 : u.getPort();
+                      int q = url.getPort() == -1 ? 443 : url.getPort();
+                      return "https".equalsIgnoreCase(url.getScheme()) && url.getHost() != null
+                          && u.getHost().equalsIgnoreCase(url.getHost()) && p == q;
+                  } catch (Exception e) { return false; }
+              }
+
+              private void open(String url) {
+                  clear();
+                  base = url;
+                  Button settings = new Button(this);
+                  settings.setText("Arbeitszeit 30  ·  Server ändern");
+                  settings.setOnClickListener(v -> setup(base));
+                  layout.addView(settings);
+                  web = new WebView(this);
+                  WebSettings ws = web.getSettings();
+                  ws.setJavaScriptEnabled(false);
+                  ws.setAllowFileAccess(false);
+                  ws.setAllowContentAccess(false);
+                  ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+                  ws.setSafeBrowsingEnabled(true);
+                  web.setWebViewClient(new WebViewClient() {
+                      @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest r) {
+                          if (sameServer(r.getUrl())) return false;
+                          Toast.makeText(MainActivity.this, "Externer Link blockiert", Toast.LENGTH_SHORT).show();
+                          return true;
+                      }
+                  });
+                  layout.addView(web, new LinearLayout.LayoutParams(
+                      ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+                  web.loadUrl(url);
+              }
+
+              @Override public void onBackPressed() {
+                  if (web != null && web.canGoBack()) web.goBack();
+                  else if (web != null) setup(base);
+                  else super.onBackPressed();
+              }
+              @Override protected void onDestroy() { if (web != null) web.destroy(); super.onDestroy(); }
+          }
+          END_app_src_main_java_at_arbeitszeit_zeitkonto_MainActivity_java
+      - name: Installierbare Debug-APK bauen
+        run: gradle --no-daemon assembleDebug
+      - name: Build-Ergebnis prüfen
+        run: test -s app/build/outputs/apk/debug/app-debug.apk
+      - name: APK als Download bereitstellen
+        uses: actions/upload-artifact@v4
+        with:
+          name: Arbeitszeit-30-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
