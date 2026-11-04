@@ -300,6 +300,7 @@ jobs:
       - name: APK herunterladen ermöglichen
         uses: actions/upload-artifact@v4
         with:
+          retention-days: 1
           name: Arbeitszeit-30-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
