@@ -188,6 +188,13 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS shifts_user_date ON shifts(user_id, started_at);
         CREATE INDEX IF NOT EXISTS audit_created ON audit(created_at);
+        CREATE TABLE IF NOT EXISTS work_schedules (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 6),
+            begins TEXT NOT NULL,
+            ends TEXT NOT NULL,
+            PRIMARY KEY (user_id,weekday)
+        );
         CREATE TABLE IF NOT EXISTS punch_requests (
             user_id INTEGER NOT NULL REFERENCES users(id),
             request_id TEXT NOT NULL,
@@ -492,6 +499,119 @@ def csv_safe_cell(value):
     if text.lstrip().startswith(('=', '+', '-', '@')) or text.startswith(('\t', '\r', '\n')):
         return "'" + text
     return text
+
+
+
+WEEKDAYS_DE = ('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag',
+               'Freitag', 'Samstag', 'Sonntag')
+
+
+def time_to_minutes(value):
+    if not isinstance(value, str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', value):
+        raise ValueError('Dienstzeit muss dem Format HH:MM entsprechen.')
+    hours, minutes = (int(x) for x in value.split(':'))
+    return 60 * hours + minutes
+
+
+def scheduled_duration(start, end):
+    initial = time_to_minutes(start)
+    final = time_to_minutes(end)
+    length = (final - initial) % (24 * 60)
+    if not 15 <= length <= 16 * 60:
+        raise ValueError('Eine geplante Schicht muss 15 Minuten bis 16 Stunden dauern.')
+    return length
+
+
+def scheduled_week(db, user_id):
+    return {row['weekday']: row for row in db.execute(
+        'SELECT * FROM work_schedules WHERE user_id=? ORDER BY weekday', (user_id,))}
+
+
+def schedule_save(db, actor, target_id, schedule):
+    if actor['role'] == 'employee':
+        raise PermissionError('Nur die Verwaltung darf Dienstzeiten bearbeiten.')
+    target = db.execute('SELECT id,role FROM users WHERE id=?', (target_id,)).fetchone()
+    if not target or (target['role']=='superadmin' and actor['role']!='superadmin'):
+        raise PermissionError('Keine Berechtigung für dieses Konto.')
+    if len(schedule) != 7:
+        raise ValueError('Bitte die ganze Woche übermitteln.')
+    prepared = []
+    for day, times in enumerate(schedule):
+        start, end = times
+        if not start and not end:
+            continue
+        if not start or not end:
+            raise ValueError(f'{WEEKDAYS_DE[day]}: Beginn und Ende sind erforderlich.')
+        scheduled_duration(start, end)
+        prepared.append((target_id, day, start, end))
+    # Nur Dienstplan-Konfiguration austauschen; Zeitbuchungen nicht ändern.
+    db.execute('DELETE FROM work_schedules WHERE user_id=?', (target_id,))
+    db.executemany(
+        'INSERT INTO work_schedules(user_id,weekday,begins,ends) VALUES(?,?,?,?)',
+        prepared)
+    audit(db, actor['id'], 'work_schedule_updated', f'user:{target_id}',
+          'Tage: ' + ','.join(WEEKDAYS_DE[d] for _, d, _, _ in prepared))
+
+
+def schedule_page(db, actor, target_id, csrf):
+    if actor['role']=='employee':
+        raise PermissionError('Nur die Verwaltung darf Dienstzeiten bearbeiten.')
+    target = db.execute('SELECT * FROM users WHERE id=?',(target_id,)).fetchone()
+    if not target or (target['role']=='superadmin' and actor['role']!='superadmin'):
+        raise PermissionError('Keine Berechtigung für dieses Konto.')
+    schedule = scheduled_week(db,target_id)
+    rows = ''
+    for day, title in enumerate(WEEKDAYS_DE):
+        entry = schedule.get(day)
+        start = entry['begins'] if entry else ''
+        end = entry['ends'] if entry else ''
+        rows += (f'<tr><td><strong>{title}</strong></td><td>'
+                 f'<input aria-label="{title} Beginn" type="time" name="start_{day}" value="{start}"></td>'
+                 f'<td><input aria-label="{title} Ende" type="time" name="end_{day}" value="{end}">'
+                 '</td></tr>')
+    return (f'<h2>Dienstzeiten: {esc(target["name"])}</h2>'
+            '<section class="card"><p>Geplante Zeiten sind Orientierung, '
+            'kein Anwesenheits- oder Überstundennachweis. '
+            'Leere Tage bedeuten, dass kein Plan hinterlegt ist. '
+            'Schichten über Mitternacht sind möglich.</p>'
+            f'<form method="POST" action="/schedule">{csrf_input(csrf)}'
+            f'<input type="hidden" name="user_id" value="{target_id}">'
+            '<div class="tablewrap"><table class="table"><thead><tr>'
+            '<th>Wochentag</th><th>Geplanter Beginn</th><th>Geplantes Ende</th>'
+            f'</tr></thead><tbody>{rows}</tbody></table></div>'
+            '<p><button type="submit">Dienstplan speichern</button> '
+            '<a class="btn subtle" href="/admin">Zurück</a></p></form></section>')
+
+
+def flags_for_user(db, user_id, now=None):
+    """Prüfhinweise, keine negativen Personal- oder Abwesenheitsbewertungen."""
+    now = now or datetime.now(UTC)
+    today = now.astimezone(VIENNA).date()
+    current = get_open_shift(db,user_id)
+    flags = []
+    if current:
+        begin = parse_dt(current['started_at'])
+        if (now-begin).total_seconds() > 12*3600:
+            flags.append('Offene Buchung über 12 Stunden prüfen')
+        net,pause = shift_minutes(db,current,now.isoformat(timespec='seconds'))
+        if net >= 360 and pause < 30:
+            flags.append('Dokumentierte Pausenzeit prüfen')
+    # Abweichungen nur an Tagen mit hinterlegtem Plan bewerten.
+    schedule = scheduled_week(db,user_id).get(today.weekday())
+    if schedule:
+        start_at = datetime.combine(today,
+                                    datetime.strptime(schedule['begins'],'%H:%M').time(),
+                                    tzinfo=VIENNA)
+        day_shifts = [r for r in db.execute(
+            'SELECT started_at FROM shifts WHERE user_id=? ORDER BY started_at DESC LIMIT 100',
+            (user_id,)) if parse_dt(r['started_at']).astimezone(VIENNA).date()==today]
+        if day_shifts:
+            earliest = min(parse_dt(r['started_at']).astimezone(VIENNA) for r in day_shifts)
+            if abs((earliest-start_at).total_seconds()) > 60*60:
+                flags.append('Startzeit weicht über 60 Minuten vom Plan ab')
+        elif now.astimezone(VIENNA) > start_at + timedelta(minutes=90):
+            flags.append('Für heute kein Arbeitsbeginn gebucht – bitte prüfen')
+    return flags
 
 
 def team_status_page(db, user, status_filter='all'):
