@@ -3,6 +3,7 @@
 Ausführen: python -m unittest discover -s tests -v
 """
 import ipaddress
+from datetime import datetime
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,6 +112,19 @@ class ArbeitszeitTests(unittest.TestCase):
             absent = app.team_status_page(db, admin, "absent")
             self.assertIn("<td>Admin</td>", absent)
             self.assertNotIn("Mitarbeiter &lt;Test&gt;", absent)
+
+    def test_weekly_target_calculation_is_not_payroll(self):
+        with app.conn() as db:
+            worker, _ = self.accounts(db)
+            db.execute("UPDATE users SET weekly_target_minutes=? WHERE id=?",
+                       (2400, worker["id"]))
+            db.execute("INSERT INTO shifts(user_id,started_at,ended_at) VALUES(?,?,?)",
+                       (worker["id"], "2026-11-03T07:00:00+00:00",
+                        "2026-11-03T15:00:00+00:00"))
+            updated = db.execute("SELECT * FROM users WHERE id=?", (worker["id"],)).fetchone()
+            actual, target, diff = app.weekly_summary(
+                db, updated, datetime(2026, 11, 4, 12, tzinfo=app.VIENNA))
+            self.assertEqual((actual, target, diff), (480, 2400, -1920))
 
     def test_totp_rfc_vector_and_wrong_code(self):
         import base64
