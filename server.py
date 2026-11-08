@@ -806,6 +806,14 @@ def records_page(db, user, csrf, month):
 def admin_page(db, user, csrf):
     users = db.execute('SELECT id,name,email,role,active,must_change,weekly_target_minutes FROM users ORDER BY CASE role WHEN "superadmin" THEN 0 WHEN "admin" THEN 1 ELSE 2 END,name').fetchall()
     count = sum(u['active'] for u in users)
+    pending = db.execute(
+        "SELECT count(*) FROM correction_requests c JOIN users u ON u.id=c.requester_id "
+        "WHERE c.status='pending' AND c.requester_id<>? "
+        "AND (?='superadmin' OR u.role!='superadmin')",
+        (user['id'],user['role'])).fetchone()[0]
+    pending_notice = (
+        f'<p class="warn">{pending} Korrekturantrag/Anträge müssen geprüft werden. '
+        '<a href="/corrections">Jetzt prüfen</a></p>' if pending else '')
     lines = '<tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th>Wochen-Soll</th><th>Aktion</th></tr>'
     for u in users:
         role = {'employee':'Mitarbeiter','admin':'Administrator','superadmin':'Superadministrator'}[u['role']]
@@ -826,7 +834,7 @@ def admin_page(db, user, csrf):
                       '<button class="subtle">Speichern</button></form>')
         lines += f'<tr><td>{esc(u["name"])}</td><td>{esc(u["email"])}</td><td>{role}</td><td>{"Aktiv" if u["active"] else "Inaktiv"}</td><td>{target}</td><td>{act}</td></tr>'
     roles = '<option value="employee">Mitarbeiter</option>' + ('<option value="admin">Administrator</option>' if user['role']=='superadmin' else '')
-    return f'''<h2>Verwaltung</h2><div class="grid"><section class="card"><h2>Benutzerkonten</h2><div class="metric">{count} / {CAPACITY}</div><p class="small muted">Aktive Konten einschließlich Verwaltung</p><a href="/records">Stundenübersicht öffnen →</a><p><a href="/team">Aktuellen Teamstatus ansehen →</a></p></section><section class="card"><h2>Neuen Zugang erstellen</h2><form method="POST" action="/create-user">{csrf_input(csrf)}<label>Name</label><input name="name" maxlength="100" required><label>E-Mail</label><input name="email" type="email" required><label>Rolle</label><select name="role">{roles}</select><p><button>Konto erstellen</button></p><p class="small muted">Das einmalige Startpasswort wird auf der nächsten Seite angezeigt.</p></form></section></div><section class="card"><h2>Konten und Berechtigungen</h2><div class="tablewrap"><table class="table">{lines}</table></div><p class="small muted">Administratoren dürfen keine Superadministrator-Konten verändern. Berechtigungen und Korrekturen werden protokolliert.</p></section>'''
+    return f'''<h2>Verwaltung</h2>{pending_notice}<div class="grid"><section class="card"><h2>Benutzerkonten</h2><div class="metric">{count} / {CAPACITY}</div><p class="small muted">Aktive Konten einschließlich Verwaltung</p><a href="/records">Stundenübersicht öffnen →</a><p><a href="/team">Aktuellen Teamstatus ansehen →</a></p></section><section class="card"><h2>Neuen Zugang erstellen</h2><form method="POST" action="/create-user">{csrf_input(csrf)}<label>Name</label><input name="name" maxlength="100" required><label>E-Mail</label><input name="email" type="email" required><label>Rolle</label><select name="role">{roles}</select><p><button>Konto erstellen</button></p><p class="small muted">Das einmalige Startpasswort wird auf der nächsten Seite angezeigt.</p></form></section></div><section class="card"><h2>Konten und Berechtigungen</h2><div class="tablewrap"><table class="table">{lines}</table></div><p class="small muted">Administratoren dürfen keine Superadministrator-Konten verändern. Berechtigungen und Korrekturen werden protokolliert.</p></section>'''
 
 
 
