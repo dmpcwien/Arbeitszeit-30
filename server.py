@@ -880,7 +880,7 @@ def audit_page(db):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version='Arbeitszeit30/1.9'
+    server_version='Arbeitszeit30/1.10'
     sys_version=''
 
     def log_message(self, format, *args):
