@@ -6,7 +6,7 @@ Interne Zeiterfassung als Übergangslösung für bis zu 30 aktive Konten in VZA7
 Die App erfasst **gebuchte** Arbeitszeiten, Pausen und Korrekturen. Sie ist
 **kein** automatischer Anwesenheitsnachweis und keine fertige Lohnabrechnung.
 
-## Funktionen (v1.10 – schrittweiser Ausbau)
+## Funktionen (v1.11 – schrittweiser Ausbau)
 
 - Stempelaktionen: Arbeitsbeginn, Pause starten/beenden, Feierabend
 - Serverseitig idempotente Stempelvorgänge bei erneut gesendeten Formularen
@@ -23,6 +23,9 @@ Die App erfasst **gebuchte** Arbeitszeiten, Pausen und Korrekturen. Sie ist
 - Optionales TOTP-MFA; in der internen Docker-Vorlage für Administratoren verpflichtend
 - Eigene Stundenübersicht und monatlicher CSV-Export
 - Teamstatus für Administratoren mit Statusfilter (Dienst/Pause/Nicht eingestempelt)
+- Live-Teamseite mit Aktualisierung alle 30 Sekunden nur bei sichtbarem Tab
+- Individuelle Arbeitszeitpläne für sieben Wochentage (auch über Mitternacht)
+- Prüfhinweise zu lange offenen Buchungen, Pausen und Planabweichungen – ohne automatische Korrektur
 - Korrekturen durch Berechtigte mit Pflichtbegründung und Audit-Protokoll
 - Benutzerverwaltung für maximal 30 aktive Konten einschließlich Administratoren
 - Rollen: Mitarbeiter, Administrator, Superadministrator
@@ -36,7 +39,27 @@ vorgesehen; Konrad Hillbrand ist als Administrator angelegt. Beide erhalten bei
 der einmaligen Initialisierung zufällig erzeugte Startpasswörter, die nicht ins
 Repository gehören. Die tatsächlichen Rechte werden serverseitig geprüft.
 
-## Lokaler Test (Python 3.10+)
+## Separater Mehrbenutzer-Testserver
+
+Der Demo-Modus nutzt **keine** produktiven Benutzer, Stammdaten oder Dienstzeiten.
+Er startet auf **127.0.0.1** mit fünf zufällig erzeugten Testkonten in einer
+**temporären** Datenbank. Beim Beenden werden alle Testdaten gelöscht.
+
+    python -m pip install -r requirements.txt
+    python scripts/demo_server.py --port 8765
+
+Dann http://127.0.0.1:8765 in verschiedenen Browserprofilen/Inkognito-Fenstern
+öffnen. E-Mail-Adressen und zufällige Passwörter stehen nur im lokalen Terminal.
+Ein Fenster als Test-Administrator, weitere als Test-Mitarbeiter öffnen.
+Ein-/Ausstempelungen erscheinen in der Teamübersicht nach maximal 30 Sekunden
+bei sichtbarem Tab. Mit Strg+C beenden.
+
+**Wichtig:** Die native Android-App akzeptiert ausschließlich HTTPS. Für Tests
+auf zwei Smartphones wäre deshalb zusätzlich ein vertrauenswürdiger
+HTTPS-Reverse-Proxy im privaten Testnetz mit passenden Zertifikaten erforderlich;
+der lokale HTTP-Testserver darf dafür nicht direkt ins Internet geöffnet werden.
+
+## Lokaler Test (Python 3.12+)
 
 Die Web-/Backend-Anwendung benötigt Python 3.12 sowie die PDF-Bibliothek
 aus requirements.txt. Die Excel-Ausgabe verwendet ausschließlich
@@ -98,11 +121,23 @@ Arbeitsbeginn, Pause, Feierabend, eingeschränkte Mitarbeiteransichten,
 Admin-Teamstatus, CSV-Export, CSRF-Schutz und das Sperren eines Kontos.
 Es werden keine produktiven Benutzer oder echten Universitätsserver verwendet.
 
+## Signierte Release-APK
+
+Die Build-Pipeline unterstützt **Version 1.11.0** und prüft den Quellcode
+und die Regressionstests vor dem Android-Build. Eine **dauerhaft signierte**
+Release-APK wird nur dann gebaut, wenn alle vier GitHub-Actions-Secrets für
+den **eigenen, langfristig gespeicherten** Keystore vorhanden sind.
+Solange diese fehlen, entsteht ausschließlich eine Debug-APK. Das signierte
+Release-Artefakt heißt `Arbeitszeit-30-RELEASE-SIGNED`.
+
+Einrichtungsanleitung: [docs/release-signing.md](docs/release-signing.md).
+Es wurde kein privater Signierschlüssel ins Repository gestellt.
+
 ## Android-APK
 
 Der GitHub-Actions-Workflow build-apk.yml installiert die PDF-Bibliothek,
 prüft Python-Syntax und Regressionstests und baut anschließend eine
-**Debug-APK** (Version 1.10.0). Das APK-Artefakt heißt
+**Debug-APK** (Version 1.11.0). Das APK-Artefakt heißt
 Arbeitszeit-30-APK und wird nach **einem Tag** automatisch aus Actions
 entfernt. Die App verlangt beim ersten Start die HTTPS-Adresse des bereits
 bereitgestellten Servers.
