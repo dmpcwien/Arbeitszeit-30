@@ -627,7 +627,7 @@ def team_status_page(db, user, status_filter='all'):
         f'<option value="{value}" {"selected" if value==status_filter else ""}>{label}</option>'
         for value,label in [('all','Alle'),('working','Im Dienst'),
                             ('paused','In Pause'),('absent','Nicht eingestempelt')])
-    rows = '<tr><th>Mitarbeiter</th><th>Status</th><th>Beginn</th><th>Netto bisher</th></tr>'
+    rows = '<tr><th>Mitarbeiter</th><th>Status</th><th>Beginn</th><th>Netto bisher</th><th>Prüfhinweise</th></tr>'
     working = paused = not_punched = 0
     for member in members:
         shift = get_open_shift(db, member['id'])
@@ -647,8 +647,11 @@ def team_status_page(db, user, status_filter='all'):
         row_state = 'absent' if not shift else ('paused' if brk else 'working')
         if status_filter != 'all' and row_state != status_filter:
             continue
+        flags = flags_for_user(db, member['id'])
+        hints = ' · '.join(esc(flag) for flag in flags) if flags else '–'
         rows += (f'<tr><td>{esc(member["name"])}</td><td>{esc(status)}</td>'
-                 f'<td>{esc(started)}</td><td>{esc(minutes)}</td></tr>')
+                 f'<td>{esc(started)}</td><td>{esc(minutes)}</td>'
+                 f'<td class="hints">{hints}</td></tr>')
     total = len(members)
     return (f'<h2>Teamstatus</h2><div class="grid">'
             f'<section class="card"><h2>Im Dienst</h2><div class="metric">{working}</div></section>'
@@ -656,6 +659,8 @@ def team_status_page(db, user, status_filter='all'):
             f'<section class="card"><h2>Nicht eingestempelt</h2><div class="metric">{not_punched}</div></section>'
             f'</div><section class="card"><div class="bar"><h2>Alle aktiven Konten ({total})</h2>'
             f'<a class="btn subtle" href="/team">Aktualisieren</a></div>'
+            '<p class="small muted">Aktualisierung alle 30 Sekunden, nur wenn die Seite sichtbar ist.</p>'
+            '<div id="team-auto-refresh" data-interval="30000"></div>'
             f'<form action="/team" method="GET" class="bar">'
             f'<label for="status-filter">Statusfilter</label><select id="status-filter" '
             f'name="status" style="max-width:240px">{filter_options}</select>'
@@ -666,6 +671,7 @@ def team_status_page(db, user, status_filter='all'):
 
 
 CSS = '''
+.hints{white-space:normal!important;min-width:230px;max-width:420px;color:#8b5205}
 .liveclock output{font-size:clamp(28px,5vw,42px);font-weight:750;letter-spacing:-.035em;display:block;margin:12px 0}.liveclock:empty{display:none}
 .calendar td{vertical-align:top;min-width:95px;white-space:normal;height:88px}.calendar .calhours{font-weight:750;margin:4px 0}.calendar .calempty{background:#f4f7fb}.calendar strong{font-size:15px}
 .hero{border:1px solid #aac2e5;background:linear-gradient(120deg,#fff,#eaf2fc)}.state{font-size:21px;font-weight:750;margin:16px 0}.state.working{color:#146b47}.state.pause{color:#995c0f}.state.muted{color:#506278}.primary-actions{margin:18px 0}.punchbtn{min-height:54px;min-width:160px;font-size:17px}.card+.card{margin-top:18px}@media(max-width:640px){.primary-actions form{width:100%}.punchbtn{width:100%}}
@@ -955,7 +961,9 @@ def admin_page(db, user, csrf):
                       f'<label>Stunden/Woche</label><input type="number" name="weekly_hours" '
                       f'min="0" max="60" step="0.25" value="{u["weekly_target_minutes"]/60:g}" required>'
                       '<button class="subtle">Speichern</button></form>')
-        lines += f'<tr><td>{esc(u["name"])}</td><td>{esc(u["email"])}</td><td>{role}</td><td>{"Aktiv" if u["active"] else "Inaktiv"}</td><td>{target}</td><td>{act}</td></tr>'
+        schedule_link = (f'<a href="/schedule?user_id={u["id"]}">Dienstzeiten</a>'
+                         if (user['role']=='superadmin' or u['role']!='superadmin') else '–')
+        lines += f'<tr><td>{esc(u["name"])} · {schedule_link}</td><td>{esc(u["email"])}</td><td>{role}</td><td>{"Aktiv" if u["active"] else "Inaktiv"}</td><td>{target}</td><td>{act}</td></tr>'
     roles = '<option value="employee">Mitarbeiter</option>' + ('<option value="admin">Administrator</option>' if user['role']=='superadmin' else '')
     return f'''<h2>Verwaltung</h2>{pending_notice}<div class="grid"><section class="card"><h2>Benutzerkonten</h2><div class="metric">{count} / {CAPACITY}</div><p class="small muted">Aktive Konten einschließlich Verwaltung</p><a href="/records">Stundenübersicht öffnen →</a><p><a href="/team">Aktuellen Teamstatus ansehen →</a></p></section><section class="card"><h2>Neuen Zugang erstellen</h2><form method="POST" action="/create-user">{csrf_input(csrf)}<label>Name</label><input name="name" maxlength="100" required><label>E-Mail</label><input name="email" type="email" required><label>Rolle</label><select name="role">{roles}</select><p><button>Konto erstellen</button></p><p class="small muted">Das einmalige Startpasswort wird auf der nächsten Seite angezeigt.</p></form></section></div><section class="card"><h2>Konten und Berechtigungen</h2><div class="tablewrap"><table class="table">{lines}</table></div><p class="small muted">Administratoren dürfen keine Superadministrator-Konten verändern. Berechtigungen und Korrekturen werden protokolliert.</p></section>'''
 
@@ -1152,6 +1160,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(layout('Teamstatus',team_status_page(db,user,params.get('status',['all'])[0]),user,csrf));return
             if path=='/admin' and user['role']!='employee':
                 self.send_html(layout('Verwaltung',admin_page(db,user,csrf),user,csrf));return
+            if path=='/schedule' and user['role']!='employee':
+                try: target_id=int(params.get('user_id',[0])[0])
+                except (ValueError,TypeError): target_id=0
+                try:
+                    page=schedule_page(db,user,target_id,csrf)
+                    self.send_html(layout('Dienstzeiten',page,user,csrf))
+                except PermissionError:
+                    self.send_html(layout('Zugriff verweigert',
+                                          'Dieses Konto darf nicht bearbeitet werden.',user,csrf),403)
+                return
             if path=='/access' and user['role']=='superadmin':
                 self.send_html(layout('Zugriffsfreigaben',access_page(db,user,csrf),user,csrf));return
             if path=='/audit' and user['role']!='employee':
@@ -1331,6 +1349,13 @@ class Handler(BaseHTTPRequestHandler):
                                       data.get('decision',''),data.get('note',''))
                     db.commit()
                     self.redirect('/corrections');return
+                if path=='/schedule' and user['role']!='employee':
+                    target_id=int(data.get('user_id') or 0)
+                    week=[(data.get(f'start_{day}',''),data.get(f'end_{day}',''))
+                          for day in range(7)]
+                    schedule_save(db,user,target_id,week)
+                    db.commit()
+                    self.redirect('/schedule?user_id='+str(target_id));return
                 if path=='/set-target' and user['role']!='employee':
                     target=db.execute('SELECT id,role FROM users WHERE id=?',
                                       (int(data.get('user_id') or 0),)).fetchone()
