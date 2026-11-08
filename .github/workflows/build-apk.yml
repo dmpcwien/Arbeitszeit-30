@@ -129,13 +129,18 @@ jobs:
           package at.arbeitszeit.zeitkonto;
 
           import android.app.Activity;
+          import android.app.DownloadManager;
+          import android.content.Context;
           import android.graphics.Color;
           import android.net.Uri;
           import android.os.Bundle;
+          import android.os.Build;
+          import android.os.Environment;
           import android.view.ViewGroup;
           import android.view.View;
           import android.webkit.WebResourceRequest;
           import android.webkit.WebResourceError;
+          import android.webkit.CookieManager;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
@@ -303,6 +308,49 @@ jobs:
                               Toast.LENGTH_SHORT
                           ).show();
                           return true;
+                      }
+                  });
+
+                  web.setDownloadListener((downloadUrl, userAgent, disposition, mime, length) -> {
+                      Uri candidate = Uri.parse(downloadUrl);
+                      String path = candidate.getPath();
+                      if (!sameServer(candidate) || path == null) {
+                          Toast.makeText(this, "Download-Adresse nicht erlaubt", Toast.LENGTH_SHORT).show();
+                          return;
+                      }
+                      String extension;
+                      if ("/export-pdf".equals(path)) extension = ".pdf";
+                      else if ("/export-xlsx".equals(path)) extension = ".xlsx";
+                      else if ("/export".equals(path)) extension = ".csv";
+                      else {
+                          Toast.makeText(this, "Dieser Download ist nicht freigegeben", Toast.LENGTH_SHORT).show();
+                          return;
+                      }
+                      String month = candidate.getQueryParameter("month");
+                      if (month == null || !month.matches("[0-9]{4}-(0[1-9]|1[0-2])")) {
+                          month = "monat";
+                      }
+                      String filename = "arbeitszeit-" + month + "-" + System.currentTimeMillis() + extension;
+                      try {
+                          DownloadManager.Request download = new DownloadManager.Request(candidate);
+                          String cookie = CookieManager.getInstance().getCookie(downloadUrl);
+                          if (cookie != null && !cookie.isEmpty()) download.addRequestHeader("Cookie", cookie);
+                          download.setMimeType(mime);
+                          download.setTitle(filename);
+                          download.setNotificationVisibility(
+                              DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                          if (Build.VERSION.SDK_INT >= 29) {
+                              download.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename);
+                          } else {
+                              download.setDestinationInExternalFilesDir(
+                                  this, Environment.DIRECTORY_DOWNLOADS, filename);
+                          }
+                          DownloadManager manager = (DownloadManager) getSystemService(
+                              Context.DOWNLOAD_SERVICE);
+                          manager.enqueue(download);
+                          Toast.makeText(this, "Download gestartet", Toast.LENGTH_SHORT).show();
+                      } catch (Exception exception) {
+                          Toast.makeText(this, "Download fehlgeschlagen", Toast.LENGTH_LONG).show();
                       }
                   });
 
