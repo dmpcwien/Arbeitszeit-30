@@ -38,6 +38,29 @@
     syncVisibility();
   }
 
+  // Teamansicht: nur während sichtbarer Seite neu vom Server laden.
+  const teamRefresh = document.getElementById("team-auto-refresh");
+  if (teamRefresh) {
+    const configured = Number(teamRefresh.dataset.interval);
+    const period = Number.isFinite(configured)
+      ? Math.max(15000, configured) : 30000;
+    let interval = null;
+    function syncTeamRefresh() {
+      if (interval !== null) clearInterval(interval);
+      interval = null;
+      if (!document.hidden) {
+        interval = setInterval(() => {
+          if (!document.hidden && navigator.onLine !== false) {
+            window.location.reload();
+          }
+        }, period);
+      }
+    }
+    document.addEventListener("visibilitychange", syncTeamRefresh);
+    window.addEventListener("pageshow", syncTeamRefresh);
+    syncTeamRefresh();
+  }
+
   for (const form of document.querySelectorAll('form[action="/punch"]')) {
     form.addEventListener("submit", () => {
       for (const button of form.querySelectorAll('button[type="submit"],button:not([type])')) {
