@@ -1043,8 +1043,8 @@ class Handler(BaseHTTPRequestHandler):
                 blocked=(db.execute('SELECT count(*) FROM login_attempts WHERE identity=?',(idkey,)).fetchone()[0]>=10
                          or db.execute('SELECT count(*) FROM login_attempts WHERE identity=?',(ipkey,)).fetchone()[0]>=100)
                 r=db.execute('SELECT * FROM users WHERE email=? AND active=1',(identity,)).fetchone()
-                if blocked or not r or not verify_password(data.get('password',''),r['password_hash'])
-                           or (r['mfa_secret'] and not verify_totp(r['mfa_secret'],data.get('code',''))):
+                if (blocked or not r or not verify_password(data.get('password',''),r['password_hash'])
+                        or (r['mfa_secret'] and not verify_totp(r['mfa_secret'],data.get('code','')))):
                     db.execute('INSERT INTO login_attempts(identity,attempted_at) VALUES(?,?)',(idkey,int(time.time())))
                     db.execute('INSERT INTO login_attempts(identity,attempted_at) VALUES(?,?)',(ipkey,int(time.time())))
                     db.commit()
