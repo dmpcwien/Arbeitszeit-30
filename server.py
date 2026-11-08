@@ -643,7 +643,10 @@ def layout(title, content, user=None, csrf='', notice='', error=''):
                 + f'<a href="/calendar">Kalender</a><a href="/corrections">Korrekturen</a><a href="/security">Sicherheit</a><a href="/password">Passwort</a><form method="POST" action="/logout" class="inline">{csrf_input(csrf)}<button class="subtle" type="submit">Abmelden</button></form></nav>')
         menu = f'<div class="bar"><span class="small">{esc(user["name"])} · {role}</span>{menu}</div>'
     flash = ('<div class="flash">'+esc(notice)+'</div>' if notice else '') + ('<div class="flash err">'+esc(error)+'</div>' if error else '')
-    script = '<script src="/static/dashboard.js" defer></script>' if user else ''
+    script = ('<script src="/static/dashboard.js" defer></script>'
+              if user and not user['must_change'] and
+              (not REQUIRE_ADMIN_MFA or user['role']=='employee' or user['mfa_secret'])
+              else '')
     return f'''<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#10243c"><title>{esc(title)} · Arbeitszeit 30</title><style>{CSS}</style>{script}</head><body><header><h1>◷ Arbeitszeit 30</h1>{menu}</header><main><p id="connection-status" class="warn" hidden></p>{flash}{content}</main></body></html>'''
 
 
