@@ -6,6 +6,7 @@ APP_SECURE_COOKIES=1 betreiben. Kein versteckter Administratorzugang.
 """
 import argparse
 import base64
+import calendar
 import csv
 import hashlib
 import hmac
@@ -497,6 +498,7 @@ def team_status_page(db, user):
 
 
 CSS = '''
+.calendar td{vertical-align:top;min-width:95px;white-space:normal;height:88px}.calendar .calhours{font-weight:750;margin:4px 0}.calendar .calempty{background:#f4f7fb}.calendar strong{font-size:15px}
 .hero{border:1px solid #aac2e5;background:linear-gradient(120deg,#fff,#eaf2fc)}.state{font-size:21px;font-weight:750;margin:16px 0}.state.working{color:#146b47}.state.pause{color:#995c0f}.state.muted{color:#506278}.primary-actions{margin:18px 0}.punchbtn{min-height:54px;min-width:160px;font-size:17px}.card+.card{margin-top:18px}@media(max-width:640px){.primary-actions form{width:100%}.punchbtn{width:100%}}
 :root{font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;color:#172335;background:#f4f7fb;color-scheme:light}*{box-sizing:border-box}body{margin:0}a{color:#1959b7;text-decoration:none}a:hover{text-decoration:underline}header{background:#10243c;color:white;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap}header a{color:#dfeaf7}header h1{font-size:19px;margin:0}main{max-width:1100px;margin:28px auto;padding:0 16px 60px}.bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.muted{color:#617083}.small{font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:16px;margin:18px 0}.card{background:white;padding:22px;border-radius:14px;border:1px solid #e0e8f3;box-shadow:0 2px 10px #16283f09}.card h2{font-size:18px;margin:0 0 16px}.metric{font-size:36px;font-weight:700;letter-spacing:-1px}button,.btn{cursor:pointer;border:0;border-radius:9px;padding:12px 16px;font-size:15px;font-weight:650;background:#225fbc;color:white;display:inline-block;text-decoration:none}button:hover,.btn:hover{filter:brightness(.94);text-decoration:none}.subtle{background:#eaf0f7;color:#243852}.danger{background:#b93841;color:white}button:disabled{opacity:.55;cursor:not-allowed}form.inline{display:inline}label{display:block;font-size:14px;font-weight:650;margin:12px 0 6px}input,select,textarea{border-radius:9px;width:100%;padding:11px 12px;border:1px solid #bfcddd;font-size:15px;background:#fff;color:#172335}textarea{min-height:88px}.field{max-width:420px}.pill{display:inline-block;background:#e6efff;color:#2056a2;padding:6px 9px;border-radius:30px;font-size:12px;font-weight:650}.flash{padding:14px 16px;border-radius:10px;background:#e4f5ed;color:#155c37;margin:14px 0}.err{background:#ffe9eb;color:#9e1d2a}.tablewrap{overflow:auto}.table{width:100%;border-collapse:collapse;font-size:14px}.table th{text-align:left;color:#657385;font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding:12px}.table td{padding:12px;border-top:1px solid #e7edf4;white-space:nowrap}.table tr:hover td{background:#f9fbfd}.buttons{display:flex;gap:8px;flex-wrap:wrap}.quiet{border:1px solid #cedaea;border-radius:10px;background:#f7fafc;padding:16px}.warn{background:#fff2d7;color:#784a00;padding:11px 14px;border-radius:9px}nav{display:flex;gap:15px;flex-wrap:wrap}nav a{font-size:14px}.badge{font-size:12px;color:#506278}.mobileTitle{display:none}@media(max-width:640px){header{padding:16px}main{margin:16px auto;padding:0 12px 40px}.card{padding:17px}button{min-height:46px}.buttons button{flex:1}.metric{font-size:30px}}
 '''
@@ -574,7 +576,7 @@ def layout(title, content, user=None, csrf='', notice='', error=''):
         menu = (f'<nav><a href="/">Stempeluhr</a><a href="/records">Zeiten</a>'
                 + ('<a href="/team">Teamstatus</a><a href="/admin">Verwaltung</a><a href="/audit">Protokoll</a>' if user['role'] != 'employee' else '')
                 + ('<a href="/access">Zugriffsfreigaben</a>' if user['role'] == 'superadmin' else '')
-                + f'<a href="/corrections">Korrekturen</a><a href="/security">Sicherheit</a><a href="/password">Passwort</a><form method="POST" action="/logout" class="inline">{csrf_input(csrf)}<button class="subtle" type="submit">Abmelden</button></form></nav>')
+                + f'<a href="/calendar">Kalender</a><a href="/corrections">Korrekturen</a><a href="/security">Sicherheit</a><a href="/password">Passwort</a><form method="POST" action="/logout" class="inline">{csrf_input(csrf)}<button class="subtle" type="submit">Abmelden</button></form></nav>')
         menu = f'<div class="bar"><span class="small">{esc(user["name"])} · {role}</span>{menu}</div>'
     flash = ('<div class="flash">'+esc(notice)+'</div>' if notice else '') + ('<div class="flash err">'+esc(error)+'</div>' if error else '')
     return f'''<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#10243c"><title>{esc(title)} · Arbeitszeit 30</title><style>{CSS}</style></head><body><header><h1>◷ Arbeitszeit 30</h1>{menu}</header><main>{flash}{content}</main></body></html>'''
@@ -650,6 +652,50 @@ def dashboard(db, user, csrf):
             '</section></div><section class="card"><h2>Letzte Buchungen</h2>'
             f'<div class="tablewrap"><table class="table">{lines}</table></div>'
             '<p><a href="/records">Alle Buchungen ansehen</a></p></section>')
+
+
+
+def calendar_page(db, user, month):
+    """Read-only calendar of a person's recorded shifts (by start date)."""
+    if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', month):
+        month = datetime.now(VIENNA).strftime('%Y-%m')
+    year, number = map(int, month.split('-'))
+    by_day = {}
+    for shift in db.execute('SELECT * FROM shifts WHERE user_id=?', (user['id'],)):
+        at = parse_dt(shift['started_at']).astimezone(VIENNA)
+        if at.year == year and at.month == number:
+            day = at.day
+            net, pause = shift_minutes(db, shift)
+            entry = by_day.setdefault(day, [0, 0, 0])
+            entry[0] += net
+            entry[1] += pause
+            entry[2] += 1
+    cells = '<tr>' + ''.join(f'<th>{name}</th>' for name in
+                              ('Mo','Di','Mi','Do','Fr','Sa','So')) + '</tr>'
+    for week in calendar.monthcalendar(year, number):
+        cells += '<tr>'
+        for day in week:
+            if not day:
+                cells += '<td class="calempty"></td>'
+                continue
+            data = by_day.get(day)
+            if data:
+                info = (f'<div class="calhours">{fmt_minutes(data[0])}</div>'
+                        f'<div class="small muted">Pause {fmt_minutes(data[1])}</div>'
+                        f'<div class="small muted">{data[2]} Buchung(en)</div>')
+            else:
+                info = '<div class="small muted">–</div>'
+            cells += f'<td><strong>{day}</strong>{info}</td>'
+        cells += '</tr>'
+    return (f'<h2>Mein Monatskalender</h2><section class="card">'
+            f'<form method="GET" action="/calendar" class="bar">'
+            f'<label for="calmonth">Monat</label>'
+            f'<input id="calmonth" type="month" name="month" value="{month}">'
+            '<button>Monat anzeigen</button></form>'
+            '<p class="small muted">Schichten werden dem Starttag zugeordnet. '
+            'Ein leerer Tag ist kein Beweis für Abwesenheit oder Urlaub.</p>'
+            f'<div class="tablewrap"><table class="table calendar">{cells}</table></div>'
+            '<p><a href="/corrections">Fehlende Buchung beantragen</a></p></section>')
 
 
 def allowed_records(db, user):
@@ -861,6 +907,9 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/':
                 content=dashboard(db,user,csrf)
                 self.send_html(layout('Stempeluhr',content,user,csrf));return
+            if path=='/calendar':
+                month=params.get('month',[datetime.now(VIENNA).strftime('%Y-%m')])[0]
+                self.send_html(layout('Kalender',calendar_page(db,user,month),user,csrf));return
             if path=='/corrections':
                 try: selected=int(params.get('shift_id',[0])[0])
                 except (ValueError,TypeError): selected=0
