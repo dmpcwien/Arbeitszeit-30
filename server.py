@@ -490,6 +490,7 @@ def team_status_page(db, user):
 
 
 CSS = '''
+.hero{border:1px solid #aac2e5;background:linear-gradient(120deg,#fff,#eaf2fc)}.state{font-size:21px;font-weight:750;margin:16px 0}.state.working{color:#146b47}.state.pause{color:#995c0f}.state.muted{color:#506278}.primary-actions{margin:18px 0}.punchbtn{min-height:54px;min-width:160px;font-size:17px}.card+.card{margin-top:18px}@media(max-width:640px){.primary-actions form{width:100%}.punchbtn{width:100%}}
 :root{font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;color:#172335;background:#f4f7fb;color-scheme:light}*{box-sizing:border-box}body{margin:0}a{color:#1959b7;text-decoration:none}a:hover{text-decoration:underline}header{background:#10243c;color:white;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap}header a{color:#dfeaf7}header h1{font-size:19px;margin:0}main{max-width:1100px;margin:28px auto;padding:0 16px 60px}.bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.muted{color:#617083}.small{font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:16px;margin:18px 0}.card{background:white;padding:22px;border-radius:14px;border:1px solid #e0e8f3;box-shadow:0 2px 10px #16283f09}.card h2{font-size:18px;margin:0 0 16px}.metric{font-size:36px;font-weight:700;letter-spacing:-1px}button,.btn{cursor:pointer;border:0;border-radius:9px;padding:12px 16px;font-size:15px;font-weight:650;background:#225fbc;color:white;display:inline-block;text-decoration:none}button:hover,.btn:hover{filter:brightness(.94);text-decoration:none}.subtle{background:#eaf0f7;color:#243852}.danger{background:#b93841;color:white}button:disabled{opacity:.55;cursor:not-allowed}form.inline{display:inline}label{display:block;font-size:14px;font-weight:650;margin:12px 0 6px}input,select,textarea{border-radius:9px;width:100%;padding:11px 12px;border:1px solid #bfcddd;font-size:15px;background:#fff;color:#172335}textarea{min-height:88px}.field{max-width:420px}.pill{display:inline-block;background:#e6efff;color:#2056a2;padding:6px 9px;border-radius:30px;font-size:12px;font-weight:650}.flash{padding:14px 16px;border-radius:10px;background:#e4f5ed;color:#155c37;margin:14px 0}.err{background:#ffe9eb;color:#9e1d2a}.tablewrap{overflow:auto}.table{width:100%;border-collapse:collapse;font-size:14px}.table th{text-align:left;color:#657385;font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding:12px}.table td{padding:12px;border-top:1px solid #e7edf4;white-space:nowrap}.table tr:hover td{background:#f9fbfd}.buttons{display:flex;gap:8px;flex-wrap:wrap}.quiet{border:1px solid #cedaea;border-radius:10px;background:#f7fafc;padding:16px}.warn{background:#fff2d7;color:#784a00;padding:11px 14px;border-radius:9px}nav{display:flex;gap:15px;flex-wrap:wrap}nav a{font-size:14px}.badge{font-size:12px;color:#506278}.mobileTitle{display:none}@media(max-width:640px){header{padding:16px}main{margin:16px auto;padding:0 12px 40px}.card{padding:17px}button{min-height:46px}.buttons button{flex:1}.metric{font-size:30px}}
 '''
 
@@ -505,7 +506,7 @@ def layout(title, content, user=None, csrf='', notice='', error=''):
         menu = (f'<nav><a href="/">Stempeluhr</a><a href="/records">Zeiten</a>'
                 + ('<a href="/team">Teamstatus</a><a href="/admin">Verwaltung</a><a href="/audit">Protokoll</a>' if user['role'] != 'employee' else '')
                 + ('<a href="/access">Zugriffsfreigaben</a>' if user['role'] == 'superadmin' else '')
-                + f'<a href="/password">Passwort</a><form method="POST" action="/logout" class="inline">{csrf_input(csrf)}<button class="subtle" type="submit">Abmelden</button></form></nav>')
+                + f'<a href="/corrections">Korrekturen</a><a href="/security">Sicherheit</a><a href="/password">Passwort</a><form method="POST" action="/logout" class="inline">{csrf_input(csrf)}<button class="subtle" type="submit">Abmelden</button></form></nav>')
         menu = f'<div class="bar"><span class="small">{esc(user["name"])} · {role}</span>{menu}</div>'
     flash = ('<div class="flash">'+esc(notice)+'</div>' if notice else '') + ('<div class="flash err">'+esc(error)+'</div>' if error else '')
     return f'''<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#10243c"><title>{esc(title)} · Arbeitszeit 30</title><style>{CSS}</style></head><body><header><h1>◷ Arbeitszeit 30</h1>{menu}</header><main>{flash}{content}</main></body></html>'''
@@ -515,29 +516,72 @@ def start_page():
     return layout('Anmeldung', f'''<section class="card" style="max-width:430px;margin:64px auto"><h2>Anmelden</h2><p class="muted">Zeiterfassung für maximal {CAPACITY} Konten einschließlich Administration</p><form method="POST" action="/login"><label>E-Mail-Adresse</label><input type="email" name="email" autocomplete="username" required><label>Passwort</label><input type="password" name="password" autocomplete="current-password" required><p><button type="submit">Anmelden</button></p></form><p class="small muted">Bei Zugangsproblemen bitte die zuständige Administration kontaktieren.</p></section>''')
 
 
+def weekly_summary(db, user, today=None):
+    today = today or datetime.now(VIENNA)
+    monday = (today - timedelta(days=today.weekday())).date()
+    week_end = monday + timedelta(days=7)
+    week_minutes = 0
+    for sh in db.execute('SELECT * FROM shifts WHERE user_id=?', (user['id'],)):
+        shift_day = parse_dt(sh['started_at']).astimezone(VIENNA).date()
+        if monday <= shift_day < week_end:
+            week_minutes += shift_minutes(db, sh)[0]
+    target = user['weekly_target_minutes']
+    return week_minutes, target, week_minutes - target if target else None
+
+
 def dashboard(db, user, csrf):
     sh = get_open_shift(db, user['id'])
     br = get_open_break(db, sh['id']) if sh else None
     if not sh:
-        status, action, caption = 'Nicht eingestempelt', 'start', 'Arbeitsbeginn'
+        status, action, caption, variant = 'Nicht eingestempelt', 'start', 'Arbeitsbeginn', 'muted'
     elif br:
-        status, action, caption = 'In Pause seit '+local(br['started_at']), 'resume', 'Pause beenden'
+        status, action, caption, variant = 'In Pause seit ' + local(br['started_at']), 'resume', 'Pause beenden', 'pause'
     else:
-        status, action, caption = 'Im Dienst seit '+local(sh['started_at']), 'pause', 'Pause starten'
+        status, action, caption, variant = 'Im Dienst seit ' + local(sh['started_at']), 'pause', 'Pause starten', 'working'
     now = datetime.now(VIENNA)
     month = now.strftime('%Y-%m')
-    rows = db.execute('SELECT * FROM shifts WHERE user_id=? ORDER BY started_at DESC LIMIT 7', (user['id'],)).fetchall()
-    monthly = [r for r in db.execute('SELECT * FROM shifts WHERE user_id=?', (user['id'],)) if parse_dt(r['started_at']).astimezone(VIENNA).strftime('%Y-%m') == month]
-    mins = sum(shift_minutes(db,r)[0] for r in monthly)
-    buttons = f'''<form method="POST" action="/punch" class="inline">{csrf_input(csrf)}<input type="hidden" name="action" value="{action}"><button>{caption}</button></form>'''
+    rows = db.execute('SELECT * FROM shifts WHERE user_id=? ORDER BY started_at DESC LIMIT 7',
+                      (user['id'],)).fetchall()
+    monthly = [r for r in db.execute('SELECT * FROM shifts WHERE user_id=?', (user['id'],))
+               if parse_dt(r['started_at']).astimezone(VIENNA).strftime('%Y-%m') == month]
+    minutes = sum(shift_minutes(db, r)[0] for r in monthly)
+    week_minutes, target, difference = weekly_summary(db, user, now)
+    today_minutes = sum(shift_minutes(db, r)[0] for r in monthly
+                        if parse_dt(r['started_at']).astimezone(VIENNA).date() == now.date())
+    buttons = (f'<form method="POST" action="/punch" class="inline">{csrf_input(csrf)}'
+               f'<input type="hidden" name="action" value="{action}">'
+               f'<button class="punchbtn">{caption}</button></form>')
     if sh and not br:
-        buttons += f''' <form method="POST" action="/punch" class="inline">{csrf_input(csrf)}<input type="hidden" name="action" value="stop"><button class="danger">Feierabend</button></form>'''
+        buttons += (f'<form method="POST" action="/punch" class="inline">{csrf_input(csrf)}'
+                    '<input type="hidden" name="action" value="stop">'
+                    '<button class="danger punchbtn">Feierabend</button></form>')
     lines = '<tr><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th></tr>'
-    for r in rows[:7]:
+    for r in rows:
         net, pause = shift_minutes(db, r)
-        lines += f'<tr><td>{local(r["started_at"])}</td><td>{local(r["ended_at"])}</td><td>{fmt_minutes(pause)}</td><td>{fmt_minutes(net)}</td></tr>'
-    warn = '<p class="warn">Diese Schicht ist seit mehr als 20 Stunden offen. Bitte gegebenenfalls von der Verwaltung korrigieren lassen.</p>' if sh and (datetime.now(UTC)-parse_dt(sh['started_at'])).total_seconds()>20*3600 else ''
-    return f'''<h2>Meine Stempeluhr</h2><div class="grid"><section class="card"><h2>Status</h2><div class="pill">{esc(status)}</div><p class="muted small">Uhrzeit: Europa/Wien · Serverzeit</p><div class="buttons">{buttons}</div>{warn}</section><section class="card"><h2>Arbeitszeit im {now.strftime('%m.%Y')}</h2><div class="metric">{fmt_minutes(mins)}</div><p class="small muted">Aus den zuletzt erfassten Schichten; offene Schichten laufen mit.</p><a href="/records">Alle Einträge ansehen →</a></section></div><section class="card"><h2>Letzte Buchungen</h2><div class="tablewrap"><table class="table">{lines}</table></div></section>'''
+        lines += (f'<tr><td>{local(r["started_at"])}</td><td>{local(r["ended_at"])}</td>'
+                  f'<td>{fmt_minutes(pause)}</td><td>{fmt_minutes(net)}</td></tr>')
+    warn = ('<p class="warn">Diese Schicht ist seit mehr als 20 Stunden offen. '
+            'Bitte gegebenenfalls von der Verwaltung korrigieren lassen.</p>'
+            if sh and (datetime.now(UTC)-parse_dt(sh['started_at'])).total_seconds() > 20*3600 else '')
+    target_text = (f'<div class="small muted">Soll: {fmt_minutes(target)} · '
+                   f'Differenz: {"+" if difference >= 0 else "−"}{fmt_minutes(abs(difference))}</div>'
+                   if difference is not None else
+                   '<div class="small muted">Sollzeit noch nicht von der Verwaltung eingerichtet.</div>')
+    return (f'<h2>Meine Stempeluhr</h2>'
+            f'<section class="card hero"><h2>Aktueller Status</h2><div class="state {variant}">{esc(status)}</div>'
+            f'<p class="small muted">Buchungszeit laut Server · Zeitzone Europa/Wien</p>'
+            f'<div class="buttons primary-actions">{buttons}</div>{warn}'
+            f'<p><a href="/corrections">Fehlende Buchung oder Korrektur beantragen</a></p></section>'
+            f'<div class="grid"><section class="card"><h2>Heute</h2>'
+            f'<div class="metric">{fmt_minutes(today_minutes)}</div></section>'
+            f'<section class="card"><h2>Diese Woche (Ist)</h2>'
+            f'<div class="metric">{fmt_minutes(week_minutes)}</div>{target_text}</section>'
+            f'<section class="card"><h2>Monat {now.strftime("%m.%Y")}</h2>'
+            f'<div class="metric">{fmt_minutes(minutes)}</div>'
+            '<p class="small muted">Offene Schichten laufen mit; Starttag bestimmt die Zuordnung.</p>'
+            '</section></div><section class="card"><h2>Letzte Buchungen</h2>'
+            f'<div class="tablewrap"><table class="table">{lines}</table></div>'
+            '<p><a href="/records">Alle Buchungen ansehen</a></p></section>')
 
 
 def allowed_records(db, user):
@@ -555,16 +599,16 @@ def records_page(db, user, csrf, month):
     for r in rows:
         net,pause = shift_minutes(db,r)
         totals[r['name']] = totals.get(r['name'],0)+net
-        action = f'<td><a href="/edit?id={r["id"]}">Korrigieren</a></td>' if user['role'] != 'employee' and (user['role']=='superadmin' or r['role']!='superadmin') else ('<td>–</td>' if user['role']!='employee' else '')
-        lines += f'<tr><td>{esc(r["name"])}</td><td>{local(r["started_at"])}</td><td>{local(r["ended_at"])}</td><td>{fmt_minutes(pause)}</td><td>{fmt_minutes(net)}</td>{action}</tr>'
+        action = f'<td><a href="/edit?id={r["id"]}">Direkt korrigieren</a></td>' if user['role'] != 'employee' and (user['role']=='superadmin' or r['role']!='superadmin') else ('<td>–</td>' if user['role']!='employee' else '')
+        lines += f'<tr><td>{esc(r["name"])}'+(' · <a href="/corrections?shift_id='+str(r['id'])+'">Antrag</a>' if r['user_id']==user['id'] and r['ended_at'] else '')+f'</td><td>{local(r["started_at"])}</td><td>{local(r["ended_at"])}</td><td>{fmt_minutes(pause)}</td><td>{fmt_minutes(net)}</td>{action}</tr>'
     summary = ' · '.join(f'{esc(k)}: <b>{fmt_minutes(v)}</b>' for k,v in sorted(totals.items())) or 'Keine Buchungen im gewählten Monat.'
     return f'''<h2>Arbeitszeitübersicht</h2><div class="card"><form method="GET" action="/records" class="bar"><div><label for="month">Monat</label><input id="month" type="month" name="month" value="{month}"></div><button>Filtern</button> <a class="btn subtle" href="/export?month={month}">CSV exportieren</a></form><p>{summary}</p><div class="tablewrap"><table class="table">{lines}</table></div><p class="small muted">Buchungen über Mitternacht werden hier dem Startmonat zugerechnet. Pausen sind abgezogen. Das sind erfasste Zeiten, keine automatische rechtliche Überstundenabrechnung.</p></div>'''
 
 
 def admin_page(db, user, csrf):
-    users = db.execute('SELECT id,name,email,role,active,must_change FROM users ORDER BY CASE role WHEN "superadmin" THEN 0 WHEN "admin" THEN 1 ELSE 2 END,name').fetchall()
+    users = db.execute('SELECT id,name,email,role,active,must_change,weekly_target_minutes FROM users ORDER BY CASE role WHEN "superadmin" THEN 0 WHEN "admin" THEN 1 ELSE 2 END,name').fetchall()
     count = sum(u['active'] for u in users)
-    lines = '<tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th>Aktion</th></tr>'
+    lines = '<tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th>Wochen-Soll</th><th>Aktion</th></tr>'
     for u in users:
         role = {'employee':'Mitarbeiter','admin':'Administrator','superadmin':'Superadministrator'}[u['role']]
         if user['role'] == 'superadmin' and u['role'] != 'superadmin' and u['id'] != user['id']:
@@ -575,7 +619,14 @@ def admin_page(db, user, csrf):
             act = f'<form method="POST" action="/toggle-user" class="inline">{csrf_input(csrf)}<input type="hidden" name="user_id" value="{u["id"]}"><button class="subtle">{state}</button></form>'
         else:
             act = '–'
-        lines += f'<tr><td>{esc(u["name"])}</td><td>{esc(u["email"])}</td><td>{role}</td><td>{"Aktiv" if u["active"] else "Inaktiv"}</td><td>{act}</td></tr>'
+        target = ('–' if u['weekly_target_minutes'] == 0 else fmt_minutes(u['weekly_target_minutes']))
+        if user['role']=='superadmin' or u['role']!='superadmin':
+            target = (f'<form method="POST" action="/set-target">{csrf_input(csrf)}'
+                      f'<input type="hidden" name="user_id" value="{u["id"]}">'
+                      f'<label>Stunden/Woche</label><input type="number" name="weekly_hours" '
+                      f'min="0" max="60" step="0.25" value="{u["weekly_target_minutes"]/60:g}" required>'
+                      '<button class="subtle">Speichern</button></form>')
+        lines += f'<tr><td>{esc(u["name"])}</td><td>{esc(u["email"])}</td><td>{role}</td><td>{"Aktiv" if u["active"] else "Inaktiv"}</td><td>{target}</td><td>{act}</td></tr>'
     roles = '<option value="employee">Mitarbeiter</option>' + ('<option value="admin">Administrator</option>' if user['role']=='superadmin' else '')
     return f'''<h2>Verwaltung</h2><div class="grid"><section class="card"><h2>Benutzerkonten</h2><div class="metric">{count} / {CAPACITY}</div><p class="small muted">Aktive Konten einschließlich Verwaltung</p><a href="/records">Stundenübersicht öffnen →</a><p><a href="/team">Aktuellen Teamstatus ansehen →</a></p></section><section class="card"><h2>Neuen Zugang erstellen</h2><form method="POST" action="/create-user">{csrf_input(csrf)}<label>Name</label><input name="name" maxlength="100" required><label>E-Mail</label><input name="email" type="email" required><label>Rolle</label><select name="role">{roles}</select><p><button>Konto erstellen</button></p><p class="small muted">Das einmalige Startpasswort wird auf der nächsten Seite angezeigt.</p></form></section></div><section class="card"><h2>Konten und Berechtigungen</h2><div class="tablewrap"><table class="table">{lines}</table></div><p class="small muted">Administratoren dürfen keine Superadministrator-Konten verändern. Berechtigungen und Korrekturen werden protokolliert.</p></section>'''
 
