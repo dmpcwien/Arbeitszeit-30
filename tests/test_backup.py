@@ -14,9 +14,9 @@ class BackupTests(unittest.TestCase):
             source = Path(tmp) / "db.sqlite3"
             destination = Path(tmp) / "snapshots"
             with sqlite3.connect(source) as db:
+                db.execute("PRAGMA journal_mode=WAL")
                 db.execute("CREATE TABLE bookings (id INTEGER PRIMARY KEY, hours INTEGER)")
                 db.execute("INSERT INTO bookings(hours) VALUES (480)")
-                db.execute("PRAGMA journal_mode=WAL")
             snapshot = backup.backup_once(source, destination, keep=3)
             self.assertTrue(snapshot.is_file())
             self.assertEqual(snapshot.stat().st_mode & 0o777, 0o600)
