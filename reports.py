@@ -132,6 +132,8 @@ def make_pdf(records, month):
     styles = getSampleStyleSheet()
     text_style = ParagraphStyle(
         "AZTable", parent=styles["BodyText"], fontSize=8, leading=10)
+    header_style = ParagraphStyle(
+        "AZTableHeader", parent=text_style, textColor=colors.white, fontSize=8)
     title_style = ParagraphStyle(
         "AZTitle", parent=styles["Heading1"], fontSize=16, spaceAfter=9)
     story = [
@@ -140,7 +142,7 @@ def make_pdf(records, month):
                   styles["Normal"]),
         Spacer(1, 16),
     ]
-    cells = [[Paragraph(html_escape(name), text_style) for name in HEADERS]]
+    cells = [[Paragraph(html_escape(name), header_style) for name in HEADERS]]
     for record in records:
         if len(record) != len(HEADERS):
             raise ValueError("Bericht hat eine unerwartete Spaltenzahl.")
