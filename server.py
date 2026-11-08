@@ -789,6 +789,11 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/':
                 content=dashboard(db,user,csrf)
                 self.send_html(layout('Stempeluhr',content,user,csrf));return
+            if path=='/corrections':
+                try: selected=int(params.get('shift_id',[0])[0])
+                except (ValueError,TypeError): selected=0
+                self.send_html(layout('Korrekturen',
+                                      corrections_page(db,user,csrf,selected),user,csrf));return
             if path=='/records':
                 month=params.get('month',[datetime.now(VIENNA).strftime('%Y-%m')])[0]
                 self.send_html(layout('Zeiten',records_page(db,user,csrf,month),user,csrf));return
@@ -901,6 +906,36 @@ class Handler(BaseHTTPRequestHandler):
                     audit(db,user['id'],'password_changed',f'user:{user["id"]}')
                     db.commit()
                     self.redirect('/');return
+                if path=='/request-correction':
+                    submit_correction(db,user,int(data.get('shift_id') or 0),
+                                      data.get('start',''),data.get('end',''),data.get('reason',''))
+                    db.commit()
+                    self.redirect('/corrections');return
+                if path=='/review-correction' and user['role']!='employee':
+                    review_correction(db,user,int(data.get('request_id') or 0),
+                                      data.get('decision',''),data.get('note',''))
+                    db.commit()
+                    self.redirect('/corrections');return
+                if path=='/set-target' and user['role']!='employee':
+                    target=db.execute('SELECT id,role FROM users WHERE id=?',
+                                      (int(data.get('user_id') or 0),)).fetchone()
+                    if not target or (target['role']=='superadmin' and user['role']!='superadmin'):
+                        raise ValueError('Konto nicht gefunden oder keine Berechtigung.')
+                    raw=data.get('weekly_hours','')
+                    from decimal import Decimal, InvalidOperation
+                    try:
+                        number=Decimal(raw)
+                    except InvalidOperation:
+                        raise ValueError('Ungültige Sollzeit.')
+                    if not number.is_finite() or number<0 or number>60 or (number*4)!=number.__mul__(4).to_integral_value():
+                        raise ValueError('Sollzeit zwischen 0 und 60 Stunden in Viertelstundenschritten eingeben.')
+                    minutes=int(number*60)
+                    db.execute('UPDATE users SET weekly_target_minutes=? WHERE id=?',
+                               (minutes,target['id']))
+                    audit(db,user['id'],'weekly_target_changed',f'user:{target["id"]}',
+                          f'{minutes} Minuten pro Woche')
+                    db.commit()
+                    self.redirect('/admin');return
                 if path=='/punch':
                     punch(db,user['id'],data.get('action',''))
                     db.commit()
@@ -954,7 +989,7 @@ class Handler(BaseHTTPRequestHandler):
                     db.commit()
                     self.redirect('/records');return
                 self.send_html(layout('Nicht gefunden','Aktion nicht gefunden.',user,user['csrf']),404);return
-            except (ValueError,sqlite3.IntegrityError) as exc:
+            except (ValueError,PermissionError,sqlite3.IntegrityError) as exc:
                 msg='Dieses Benutzerkonto existiert möglicherweise bereits.' if isinstance(exc,sqlite3.IntegrityError) else str(exc)
                 self.send_html(layout('Eingabe prüfen',f'<section class="card"><h2>Aktion nicht möglich</h2><p class="flash err">{esc(msg)}</p><p><a href="/">Zur Stempeluhr</a> · <a href="/admin">Zur Verwaltung</a></p></section>',user,user['csrf']),400)
 
