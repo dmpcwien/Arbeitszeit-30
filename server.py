@@ -5,6 +5,7 @@ Für Internetbetrieb unbedingt hinter einem HTTPS-Reverse-Proxy mit gesetztem
 APP_SECURE_COOKIES=1 betreiben. Kein versteckter Administratorzugang.
 """
 import argparse
+import base64
 import csv
 import hashlib
 import hmac
@@ -14,6 +15,7 @@ import ipaddress
 import os
 import re
 import secrets
+import struct
 import sqlite3
 import sys
 import time
@@ -38,6 +40,7 @@ SESSION_SECONDS = 12 * 3600
 MAX_BODY = 16 * 1024
 PASSWORD_ITERATIONS = 2 ** 14
 SECURE_COOKIES = os.getenv('APP_SECURE_COOKIES') == '1'
+REQUIRE_ADMIN_MFA = os.getenv('APP_REQUIRE_ADMIN_MFA') == '1'
 
 
 def parse_cidrs(value):
@@ -495,6 +498,67 @@ CSS = '''
 '''
 
 
+
+def new_totp_secret():
+    return base64.b32encode(secrets.token_bytes(20)).decode('ascii').rstrip('=')
+
+
+def totp_code(secret, at_time=None):
+    """RFC 6238-compatible 6-digit TOTP, 30-second window, SHA-1."""
+    at_time = int(time.time() if at_time is None else at_time)
+    key = base64.b32decode(secret.upper() + '=' * (-len(secret) % 8))
+    digest = hmac.new(key, struct.pack('>Q', at_time // 30), hashlib.sha1).digest()
+    offset = digest[-1] & 15
+    number = struct.unpack('>I', digest[offset:offset+4])[0] & 0x7fffffff
+    return f'{number % 1000000:06d}'
+
+
+def verify_totp(secret, code, at_time=None):
+    if not secret or not re.fullmatch(r'\d{6}', str(code)):
+        return False
+    at_time = int(time.time() if at_time is None else at_time)
+    try:
+        return any(hmac.compare_digest(totp_code(secret, at_time + offset), str(code))
+                   for offset in (-30, 0, 30))
+    except (ValueError, TypeError, base64.binascii.Error):
+        return False
+
+
+def security_page(user, csrf):
+    if user['mfa_secret']:
+        state = ('<p class="flash">Zwei-Faktor-Anmeldung ist aktiviert.</p>'
+                 '<p class="small muted">Bei jedem neuen Login ist ein sechsstelliger '
+                 'Code aus der Authenticator-App erforderlich.</p>'
+                 f'<form method="POST" action="/mfa-disable">{csrf_input(csrf)}'
+                 '<label>Aktuelles Passwort</label>'
+                 '<input name="password" type="password" autocomplete="current-password" required>'
+                 '<label>Authenticator-Code</label>'
+                 '<input name="code" inputmode="numeric" pattern="[0-9]{6}" '
+                 'maxlength="6" autocomplete="one-time-code" required>'
+                 '<p><button class="danger">Zwei-Faktor-Anmeldung deaktivieren</button></p></form>')
+    elif user['mfa_pending_secret']:
+        state = ('<p>Den folgenden Schlüssel in deiner Authenticator-App als '
+                 'zeitbasierten sechsstelligen Code einrichten.</p>'
+                 f'<p class="quiet"><code>{esc(user["mfa_pending_secret"])}</code></p>'
+                 f'<form method="POST" action="/mfa-confirm">{csrf_input(csrf)}'
+                 '<label>Sechsstelliger Bestätigungscode</label>'
+                 '<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" '
+                 'autocomplete="one-time-code" required>'
+                 '<p><button>Aktivierung bestätigen</button></p></form>'
+                 '<p class="small muted">Teile den geheimen Schlüssel mit niemandem. '
+                 'Die Aktivierung erfolgt erst nach erfolgreicher Bestätigung.</p>')
+    else:
+        state = ('<p>Ein zusätzlicher Authenticator-Code erhöht den Schutz '
+                 'deines Kontos.</p>'
+                 f'<form method="POST" action="/mfa-start">{csrf_input(csrf)}'
+                 '<p><button>Authenticator einrichten</button></p></form>')
+    required = ('<p class="warn">Für die Verwaltung ist MFA erforderlich. '
+                'Bitte zuerst einrichten.</p>'
+                if REQUIRE_ADMIN_MFA and user['role'] != 'employee' and not user['mfa_secret']
+                else '')
+    return '<h2>Kontosicherheit</h2><section class="card">' + required + state + '</section>'
+
+
 def csrf_input(csrf):
     return f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
 
@@ -513,7 +577,7 @@ def layout(title, content, user=None, csrf='', notice='', error=''):
 
 
 def start_page():
-    return layout('Anmeldung', f'''<section class="card" style="max-width:430px;margin:64px auto"><h2>Anmelden</h2><p class="muted">Zeiterfassung für maximal {CAPACITY} Konten einschließlich Administration</p><form method="POST" action="/login"><label>E-Mail-Adresse</label><input type="email" name="email" autocomplete="username" required><label>Passwort</label><input type="password" name="password" autocomplete="current-password" required><p><button type="submit">Anmelden</button></p></form><p class="small muted">Bei Zugangsproblemen bitte die zuständige Administration kontaktieren.</p></section>''')
+    return layout('Anmeldung', f'''<section class="card" style="max-width:430px;margin:64px auto"><h2>Anmelden</h2><p class="muted">Zeiterfassung für maximal {CAPACITY} Konten einschließlich Administration</p><form method="POST" action="/login"><label>E-Mail-Adresse</label><input type="email" name="email" autocomplete="username" required><label>Passwort</label><input type="password" name="password" autocomplete="current-password" required><label>Authenticator-Code (falls eingerichtet)</label><input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code"><p><button type="submit">Anmelden</button></p></form><p class="small muted">Bei Zugangsproblemen bitte die zuständige Administration kontaktieren.</p></section>''')
 
 
 def weekly_summary(db, user, today=None):
@@ -785,7 +849,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(layout('Zugriff verweigert','Zugriff aus diesem Netz für dieses Konto nicht freigegeben.'),403);return
             if user['must_change'] and path!='/password':
                 self.redirect('/password');return
+            if REQUIRE_ADMIN_MFA and user['role']!='employee' and not user['mfa_secret'] and path not in ('/security','/password'):
+                self.redirect('/security');return
             csrf=user['csrf']
+            if path=='/security':
+                self.send_html(layout('Kontosicherheit',security_page(user,csrf),user,csrf));return
             if path=='/':
                 content=dashboard(db,user,csrf)
                 self.send_html(layout('Stempeluhr',content,user,csrf));return
@@ -859,7 +927,8 @@ class Handler(BaseHTTPRequestHandler):
                 blocked=(db.execute('SELECT count(*) FROM login_attempts WHERE identity=?',(idkey,)).fetchone()[0]>=10
                          or db.execute('SELECT count(*) FROM login_attempts WHERE identity=?',(ipkey,)).fetchone()[0]>=100)
                 r=db.execute('SELECT * FROM users WHERE email=? AND active=1',(identity,)).fetchone()
-                if blocked or not r or not verify_password(data.get('password',''),r['password_hash']):
+                if blocked or not r or not verify_password(data.get('password',''),r['password_hash'])
+                           or (r['mfa_secret'] and not verify_totp(r['mfa_secret'],data.get('code',''))):
                     db.execute('INSERT INTO login_attempts(identity,attempted_at) VALUES(?,?)',(idkey,int(time.time())))
                     db.execute('INSERT INTO login_attempts(identity,attempted_at) VALUES(?,?)',(ipkey,int(time.time())))
                     db.commit()
@@ -884,12 +953,44 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(layout('Fehler','Sitzungsprüfung fehlgeschlagen.',user,user['csrf']),403);return
             if user['must_change'] and path not in ('/password','/logout'):
                 self.redirect('/password');return
+            if REQUIRE_ADMIN_MFA and user['role']!='employee' and not user['mfa_secret'] and path not in ('/mfa-start','/mfa-confirm','/logout','/password'):
+                self.redirect('/security');return
             if path=='/logout':
                 db.execute('DELETE FROM sessions WHERE token_hash=?',(token_hash,))
                 cookie='az_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0'+('; Secure' if SECURE_COOKIES else '')
                 db.commit()
                 self.redirect('/login',cookie);return
             try:
+                if path=='/mfa-start':
+                    if user['mfa_secret']:
+                        raise ValueError('Zwei-Faktor-Anmeldung ist bereits aktiviert.')
+                    new_secret = new_totp_secret()
+                    db.execute('UPDATE users SET mfa_pending_secret=? WHERE id=?', (new_secret,user['id']))
+                    audit(db,user['id'],'mfa_enrollment_started',f'user:{user["id"]}')
+                    db.commit()
+                    self.redirect('/security');return
+                if path=='/mfa-confirm':
+                    secret=user['mfa_pending_secret']
+                    if not secret or not verify_totp(secret,data.get('code','')):
+                        raise ValueError('Authenticator-Code stimmt nicht überein.')
+                    db.execute('UPDATE users SET mfa_secret=?,mfa_pending_secret=NULL WHERE id=?',
+                               (secret,user['id']))
+                    db.execute('DELETE FROM sessions WHERE user_id=? AND token_hash<>?',
+                               (user['id'],token_hash))
+                    audit(db,user['id'],'mfa_enabled',f'user:{user["id"]}')
+                    db.commit()
+                    self.redirect('/security');return
+                if path=='/mfa-disable':
+                    if REQUIRE_ADMIN_MFA and user['role']!='employee':
+                        raise ValueError('Für Administrationskonten ist MFA vorgeschrieben.')
+                    if not user['mfa_secret'] or not verify_password(data.get('password',''),user['password_hash']) or not verify_totp(user['mfa_secret'],data.get('code','')):
+                        raise ValueError('Passwort oder Authenticator-Code ungültig.')
+                    db.execute('UPDATE users SET mfa_secret=NULL,mfa_pending_secret=NULL WHERE id=?', (user['id'],))
+                    db.execute('DELETE FROM sessions WHERE user_id=? AND token_hash<>?',
+                               (user['id'],token_hash))
+                    audit(db,user['id'],'mfa_disabled',f'user:{user["id"]}')
+                    db.commit()
+                    self.redirect('/security');return
                 if path=='/access' and user['role']=='superadmin':
                     grant_remote(db,user,int(data.get('user_id','0')),int(data.get('days','0')),data.get('reason',''))
                     db.commit()
