@@ -514,6 +514,21 @@ CSS = '''
 .calendar td{vertical-align:top;min-width:95px;white-space:normal;height:88px}.calendar .calhours{font-weight:750;margin:4px 0}.calendar .calempty{background:#f4f7fb}.calendar strong{font-size:15px}
 .hero{border:1px solid #aac2e5;background:linear-gradient(120deg,#fff,#eaf2fc)}.state{font-size:21px;font-weight:750;margin:16px 0}.state.working{color:#146b47}.state.pause{color:#995c0f}.state.muted{color:#506278}.primary-actions{margin:18px 0}.punchbtn{min-height:54px;min-width:160px;font-size:17px}.card+.card{margin-top:18px}@media(max-width:640px){.primary-actions form{width:100%}.punchbtn{width:100%}}
 :root{font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;color:#172335;background:#f4f7fb;color-scheme:light}*{box-sizing:border-box}body{margin:0}a{color:#1959b7;text-decoration:none}a:hover{text-decoration:underline}header{background:#10243c;color:white;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap}header a{color:#dfeaf7}header h1{font-size:19px;margin:0}main{max-width:1100px;margin:28px auto;padding:0 16px 60px}.bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.muted{color:#617083}.small{font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:16px;margin:18px 0}.card{background:white;padding:22px;border-radius:14px;border:1px solid #e0e8f3;box-shadow:0 2px 10px #16283f09}.card h2{font-size:18px;margin:0 0 16px}.metric{font-size:36px;font-weight:700;letter-spacing:-1px}button,.btn{cursor:pointer;border:0;border-radius:9px;padding:12px 16px;font-size:15px;font-weight:650;background:#225fbc;color:white;display:inline-block;text-decoration:none}button:hover,.btn:hover{filter:brightness(.94);text-decoration:none}.subtle{background:#eaf0f7;color:#243852}.danger{background:#b93841;color:white}button:disabled{opacity:.55;cursor:not-allowed}form.inline{display:inline}label{display:block;font-size:14px;font-weight:650;margin:12px 0 6px}input,select,textarea{border-radius:9px;width:100%;padding:11px 12px;border:1px solid #bfcddd;font-size:15px;background:#fff;color:#172335}textarea{min-height:88px}.field{max-width:420px}.pill{display:inline-block;background:#e6efff;color:#2056a2;padding:6px 9px;border-radius:30px;font-size:12px;font-weight:650}.flash{padding:14px 16px;border-radius:10px;background:#e4f5ed;color:#155c37;margin:14px 0}.err{background:#ffe9eb;color:#9e1d2a}.tablewrap{overflow:auto}.table{width:100%;border-collapse:collapse;font-size:14px}.table th{text-align:left;color:#657385;font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding:12px}.table td{padding:12px;border-top:1px solid #e7edf4;white-space:nowrap}.table tr:hover td{background:#f9fbfd}.buttons{display:flex;gap:8px;flex-wrap:wrap}.quiet{border:1px solid #cedaea;border-radius:10px;background:#f7fafc;padding:16px}.warn{background:#fff2d7;color:#784a00;padding:11px 14px;border-radius:9px}nav{display:flex;gap:15px;flex-wrap:wrap}nav a{font-size:14px}.badge{font-size:12px;color:#506278}.mobileTitle{display:none}@media(max-width:640px){header{padding:16px}main{margin:16px auto;padding:0 12px 40px}.card{padding:17px}button{min-height:46px}.buttons button{flex:1}.metric{font-size:30px}}
+@media(prefers-color-scheme:dark){
+:root{color:#e8effa;background:#111824;color-scheme:dark}
+body{background:#111824;color:#e8effa}header{background:#09111e}
+.card{background:#1b2737;border-color:#38465b;box-shadow:none}
+.hero{background:linear-gradient(120deg,#1b2737,#1b334b);border-color:#43648c}
+a{color:#8cbdff}.muted,.small.muted,.badge{color:#bbc7d8}
+input,select,textarea{background:#152131;border-color:#65738a;color:#f1f5fb}
+.table td{border-color:#364255}.table tr:hover td{background:#233348}
+.table th{color:#c4cedc}.subtle{background:#33445c;color:#eff5ff}
+.pill,.quiet{background:#304660;color:#eff5ff}.warn{background:#5a421c;color:#ffe6b5}
+.flash{background:#254a3c;color:#d2f6e3}.flash.err{background:#653037;color:#ffe2e4}
+.calendar .calempty{background:#182131}.state.working{color:#7be0b2}
+.state.pause{color:#ffcc77}.state.muted{color:#c7d3e4}
+}
+
 '''
 
 
@@ -646,6 +661,18 @@ def dashboard(db, user, csrf):
     warn = ('<p class="warn">Diese Schicht ist seit mehr als 20 Stunden offen. '
             'Bitte gegebenenfalls von der Verwaltung korrigieren lassen.</p>'
             if sh and (datetime.now(UTC)-parse_dt(sh['started_at'])).total_seconds() > 20*3600 else '')
+    if sh:
+        current_net, current_pause = shift_minutes(db, sh)
+        if current_net >= 360 and current_pause < 30:
+            warn += ('<p class="warn">Pausen prüfen: Es sind mehr als sechs Stunden '
+                     'erfasst, aber weniger als 30 Minuten Pause dokumentiert. '
+                     'Es erfolgt kein automatischer Abzug.</p>')
+    open_requests = db.execute(
+        "SELECT COUNT(*) FROM correction_requests WHERE requester_id=? AND status='pending'",
+        (user['id'],)).fetchone()[0]
+    pending_notice = (f'<p class="quiet">Du hast {open_requests} offene Korrekturanträge. '
+                      '<a href="/corrections">Anträge ansehen</a></p>'
+                      if open_requests else '')
     target_text = (f'<div class="small muted">Soll: {fmt_minutes(target)} · '
                    f'Differenz: {"+" if difference >= 0 else "−"}{fmt_minutes(abs(difference))}</div>'
                    if difference is not None else
@@ -653,7 +680,7 @@ def dashboard(db, user, csrf):
     return (f'<h2>Meine Stempeluhr</h2>'
             f'<section class="card hero"><h2>Aktueller Status</h2><div class="state {variant}">{esc(status)}</div>'
             f'<p class="small muted">Buchungszeit laut Server · Zeitzone Europa/Wien</p>'
-            f'<div class="buttons primary-actions">{buttons}</div>{warn}'
+            f'<div class="buttons primary-actions">{buttons}</div>{warn}{pending_notice}'
             f'<p><a href="/corrections">Fehlende Buchung oder Korrektur beantragen</a></p></section>'
             f'<div class="grid"><section class="card"><h2>Heute</h2>'
             f'<div class="metric">{fmt_minutes(today_minutes)}</div></section>'
