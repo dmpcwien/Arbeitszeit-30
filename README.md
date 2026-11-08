@@ -6,11 +6,18 @@ Interne Zeiterfassung als Übergangslösung für bis zu 30 aktive Konten in VZA7
 Die App erfasst **gebuchte** Arbeitszeiten, Pausen und Korrekturen. Sie ist
 **kein** automatischer Anwesenheitsnachweis und keine fertige Lohnabrechnung.
 
-## Funktionen (v1.7)
+## Funktionen (v1.8 – schrittweiser Ausbau)
 
 - Stempelaktionen: Arbeitsbeginn, Pause starten/beenden, Feierabend
+- Serverseitig idempotente Stempelvorgänge bei erneut gesendeten Formularen
+- Eigenes Wochen-Soll-/Ist-Stundenkonto (durch Administrator konfigurierbar)
+- Tages-, Wochen- und Monatsübersicht sowie persönlicher Monatskalender
+- Korrekturanträge durch Mitarbeiter mit separater Admin-Freigabe und Auditspur
+- Pausenhinweise und sichtbarer Status offener Korrekturanträge
+- Automatischer Hell-/Dunkelmodus anhand des Geräts
+- Optionales TOTP-MFA; in der internen Docker-Vorlage für Administratoren verpflichtend
 - Eigene Stundenübersicht und monatlicher CSV-Export
-- Teamstatus für Administratoren: im Dienst, in Pause, nicht eingestempelt
+- Teamstatus für Administratoren mit Statusfilter (Dienst/Pause/Nicht eingestempelt)
 - Korrekturen durch Berechtigte mit Pflichtbegründung und Audit-Protokoll
 - Benutzerverwaltung für maximal 30 aktive Konten einschließlich Administratoren
 - Rollen: Mitarbeiter, Administrator, Superadministrator
@@ -72,6 +79,10 @@ wäre eine professionelle Server-/Datenbanklösung erforderlich.
 
 ## Mehrbenutzer-Integrationstests
 
+Die Tests unter tests/ überprüfen auch TOTP-Anmeldung und Pflicht-MFA,
+Korrekturen, Datenbankmigration, Rücksicherung eines Datenbank-Snapshots,
+Monatskalender und idempotente Buchungen.
+
 Die Testdatei tests/test_http_integration.py simuliert drei unabhängige Konten
 in einem lokalen HTTP-Server mit temporärer Datenbank. Sie überprüft Login,
 Arbeitsbeginn, Pause, Feierabend, eingeschränkte Mitarbeiteransichten,
@@ -80,8 +91,8 @@ Es werden keine produktiven Benutzer oder echten Universitätsserver verwendet.
 
 ## Android-APK
 
-Der GitHub-Actions-Workflow build-apk.yml führt zuerst Python-Tests aus und
-baut anschließend eine **Debug-APK** (Version 1.7.0). Das APK-Artefakt heißt
+Der GitHub-Actions-Workflow build-apk.yml prüft zuerst Python-Syntax und Tests und
+baut anschließend eine **Debug-APK** (Version 1.8.0). Das APK-Artefakt heißt
 Arbeitszeit-30-APK und wird nach **einem Tag** automatisch aus Actions
 entfernt. Die App verlangt beim ersten Start die HTTPS-Adresse des bereits
 bereitgestellten Servers.
