@@ -6,6 +6,8 @@ import ipaddress
 from datetime import datetime
 import tempfile
 import unittest
+from unittest.mock import patch
+import sys
 from pathlib import Path
 
 import server as app
@@ -160,6 +162,15 @@ class ArbeitszeitTests(unittest.TestCase):
         self.assertTrue(app.verify_totp(secret, "287082", at_time=59))
         self.assertFalse(app.verify_totp(secret, "000000", at_time=59))
         self.assertFalse(app.verify_totp(secret, "invalid", at_time=59))
+
+    def test_existing_database_is_migrated_on_normal_server_start(self):
+        with patch.object(app, "ThreadingHTTPServer") as fake_server, \
+             patch.object(app, "init_db") as upgrade, \
+             patch.object(sys, "argv", ["server.py", "serve", "--port", "8999"]):
+            app.main()
+            upgrade.assert_called_once_with()
+            fake_server.assert_called_once()
+            fake_server.return_value.__enter__.return_value.serve_forever.assert_called_once_with()
 
     def test_migration_preserves_existing_hours(self):
         with app.conn() as db:
