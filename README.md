@@ -29,16 +29,25 @@ Repository gehören. Die tatsächlichen Rechte werden serverseitig geprüft.
 Keine externen Python-Abhängigkeiten erforderlich.
 
     python -m unittest discover -s tests -v
+
+Für die Erstinitialisierung eines **neuen** lokalen Servers müssen
+`APP_SUPER_EMAIL` und `APP_ADMIN_EMAIL` als zwei unterschiedliche
+E-Mail-Adressen in der Umgebung gesetzt werden. Optional lässt sich
+`APP_ADMIN_NAME` setzen. Diese Angaben gehören nicht in den öffentlichen
+Quellcode. Die bestehenden Konten in einer bereits vorhandenen Datenbank
+bleiben davon unberührt.
+
     python server.py init
     python server.py serve --host 127.0.0.1 --port 8000
 
-Anschließend http://127.0.0.1:8000 öffnen. Das Kommando init ist nur für
-eine neue Datenbank vorgesehen. **Bestehende Daten niemals für Tests löschen.**
+Lokal unter http://127.0.0.1:8000 testen. Bestehende Daten niemals löschen
+oder erneut initialisieren. Die Datenbank liegt standardmäßig unter
+`data/arbeitszeit.sqlite3`. Produktive Datensicherung muss durch die IT
+abgenommen werden.
 
-Die Datenbank liegt unter data/arbeitszeit.sqlite3, sofern APP_DATA_DIR
-nicht gesetzt ist. Sie muss serverseitig dauerhaft und geschützt gespeichert
-werden. Backups müssen konsistent (SQLite-Backup oder WAL-konforme Sicherung)
-erfolgen; das GitHub-Repository enthält keine Produktivdaten.
+**Interner Docker-Server:** Die vorbereitete, aber noch nicht ausgerollte
+Konfiguration und Checkliste stehen unter [deploy/README.md](deploy/README.md).
+Öffentliches Hosting oder eine Render-Instanz wurden nicht eingerichtet.
 
 ## Voraussetzung für den Einsatz
 
