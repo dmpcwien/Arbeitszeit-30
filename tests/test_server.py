@@ -188,7 +188,7 @@ class ArbeitszeitTests(unittest.TestCase):
                 "2026-01-08T18:00", "Fehlende Zeitkorrektur")
             current = db.execute("SELECT * FROM shifts WHERE id=?", (cur.lastrowid,)).fetchone()
             self.assertEqual(current["started_at"], "2026-01-08T08:00:00+00:00")
-            with self.assertRaises(ValueError):
+            with self.assertRaises(PermissionError):
                 app.review_correction(db, worker, request_id, "approved", "")
             app.review_correction(db, admin, request_id, "approved", "Geprüft")
             new = db.execute("SELECT * FROM shifts WHERE id=?", (cur.lastrowid,)).fetchone()
