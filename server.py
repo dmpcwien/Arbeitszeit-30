@@ -1462,6 +1462,8 @@ def main():
         bootstrap();return
     if not DB_PATH.exists():
         print('Bitte zuerst python server.py init ausführen.');sys.exit(1)
+    # Bestehende Datenbank nur additiv migrieren; keine Benutzer neu erzeugen.
+    init_db()
     if args.host not in ('127.0.0.1','localhost','::1') and not SECURE_COOKIES:
         print('WARNUNG: Externer Betrieb ohne HTTPS/Secure-Cookies ist unsicher. APP_SECURE_COOKIES=1 und HTTPS-Proxy erforderlich.',file=sys.stderr)
     with ThreadingHTTPServer((args.host,args.port),Handler) as web:
