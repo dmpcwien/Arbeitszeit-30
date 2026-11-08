@@ -14,6 +14,9 @@ services:
     environment:
       APP_DATA_DIR: "/data"
       APP_SECURE_COOKIES: "1"
+      APP_SUPER_EMAIL: "${APP_SUPER_EMAIL:?Superadmin-Mailadresse eintragen}"
+      APP_ADMIN_EMAIL: "${APP_ADMIN_EMAIL:?Admin-Mailadresse eintragen}"
+      APP_ADMIN_NAME: "${APP_ADMIN_NAME:-Administrator}"
       APP_UNI_CIDRS: "${APP_UNI_CIDRS:?Von der IT gepruefte Client-IP-Netze eintragen}"
       APP_TRUSTED_PROXY_CIDRS: "${APP_TRUSTED_PROXY_CIDRS:?Tatsaechliche Reverse-Proxy-IP eintragen}"
     volumes:
