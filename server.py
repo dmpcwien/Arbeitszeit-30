@@ -187,6 +187,12 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS shifts_user_date ON shifts(user_id, started_at);
         CREATE INDEX IF NOT EXISTS audit_created ON audit(created_at);
+        CREATE TABLE IF NOT EXISTS punch_requests (
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            request_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(user_id,request_id)
+        );
         CREATE TABLE IF NOT EXISTS correction_requests (
             id INTEGER PRIMARY KEY,
             requester_id INTEGER NOT NULL REFERENCES users(id),
@@ -276,6 +282,21 @@ def punch(db, user_id, action):
         audit(db, user_id, 'stop', f'shift:{shift["id"]}')
     else:
         raise ValueError('Unbekannte Aktion.')
+
+
+
+def punch_once(db, user_id, action, request_id):
+    """Idempotent Stempelbuchung: Wiederholung derselben Anfrage ist ein No-op."""
+    if not re.fullmatch(r'[A-Za-z0-9_-]{15,100}', request_id or ''):
+        raise ValueError('Buchungsformular ist abgelaufen. Bitte Seite neu laden.')
+    db.execute('DELETE FROM punch_requests WHERE created_at<?',
+               ((datetime.now(UTC)-timedelta(days=7)).isoformat(timespec='seconds'),))
+    result = db.execute('INSERT OR IGNORE INTO punch_requests(user_id,request_id,created_at) '
+                        'VALUES(?,?,?)', (user_id,request_id,utc_now()))
+    if result.rowcount == 0:
+        return False
+    punch(db,user_id,action)
+    return True
 
 
 def shift_minutes(db, shift, now=None):
@@ -648,10 +669,12 @@ def dashboard(db, user, csrf):
                         if parse_dt(r['started_at']).astimezone(VIENNA).date() == now.date())
     buttons = (f'<form method="POST" action="/punch" class="inline">{csrf_input(csrf)}'
                f'<input type="hidden" name="action" value="{action}">'
+               f'<input type="hidden" name="request_id" value="{secrets.token_urlsafe(18)}">'
                f'<button class="punchbtn">{caption}</button></form>')
     if sh and not br:
         buttons += (f'<form method="POST" action="/punch" class="inline">{csrf_input(csrf)}'
                     '<input type="hidden" name="action" value="stop">'
+                    f'<input type="hidden" name="request_id" value="{secrets.token_urlsafe(18)}">'
                     '<button class="danger punchbtn">Feierabend</button></form>')
     lines = '<tr><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th></tr>'
     for r in rows:
@@ -1131,7 +1154,7 @@ class Handler(BaseHTTPRequestHandler):
                     db.commit()
                     self.redirect('/admin');return
                 if path=='/punch':
-                    punch(db,user['id'],data.get('action',''))
+                    punch_once(db,user['id'],data.get('action',''),data.get('request_id',''))
                     db.commit()
                     self.redirect('/');return
                 if path=='/create-user' and user['role']!='employee':
