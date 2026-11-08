@@ -28,6 +28,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from reports import make_pdf, make_xlsx
 
 VIENNA = ZoneInfo('Europe/Vienna')
 UTC = timezone.utc
@@ -799,7 +800,7 @@ def records_page(db, user, csrf, month):
         action = f'<td><a href="/edit?id={r["id"]}">Direkt korrigieren</a></td>' if user['role'] != 'employee' and (user['role']=='superadmin' or r['role']!='superadmin') else ('<td>–</td>' if user['role']!='employee' else '')
         lines += f'<tr><td>{esc(r["name"])}'+(' · <a href="/corrections?shift_id='+str(r['id'])+'">Antrag</a>' if r['user_id']==user['id'] and r['ended_at'] else '')+f'</td><td>{local(r["started_at"])}</td><td>{local(r["ended_at"])}</td><td>{fmt_minutes(pause)}</td><td>{fmt_minutes(net)}</td>{action}</tr>'
     summary = ' · '.join(f'{esc(k)}: <b>{fmt_minutes(v)}</b>' for k,v in sorted(totals.items())) or 'Keine Buchungen im gewählten Monat.'
-    return f'''<h2>Arbeitszeitübersicht</h2><div class="card"><form method="GET" action="/records" class="bar"><div><label for="month">Monat</label><input id="month" type="month" name="month" value="{month}"></div><button>Filtern</button> <a class="btn subtle" href="/export?month={month}">CSV exportieren</a></form><p>{summary}</p><div class="tablewrap"><table class="table">{lines}</table></div><p class="small muted">Buchungen über Mitternacht werden hier dem Startmonat zugerechnet. Pausen sind abgezogen. Das sind erfasste Zeiten, keine automatische rechtliche Überstundenabrechnung.</p></div>'''
+    return f'''<h2>Arbeitszeitübersicht</h2><div class="card"><form method="GET" action="/records" class="bar"><div><label for="month">Monat</label><input id="month" type="month" name="month" value="{month}"></div><button>Filtern</button> <a class="btn subtle" href="/export?month={month}">CSV</a><a class="btn subtle" href="/export-pdf?month={month}">PDF</a><a class="btn subtle" href="/export-xlsx?month={month}">Excel</a></form><p>{summary}</p><div class="tablewrap"><table class="table">{lines}</table></div><p class="small muted">Buchungen über Mitternacht werden hier dem Startmonat zugerechnet. Pausen sind abgezogen. Das sind erfasste Zeiten, keine automatische rechtliche Überstundenabrechnung.</p></div>'''
 
 
 def admin_page(db, user, csrf):
@@ -1038,6 +1039,37 @@ class Handler(BaseHTTPRequestHandler):
                 msg='<p class="warn">Bitte zuerst dein vorläufiges Passwort ändern.</p>' if user['must_change'] else ''
                 content=f'''<h2>Eigenes Passwort ändern</h2><section class="card" style="max-width:500px">{msg}<form method="POST" action="/password">{csrf_input(csrf)}<label>Aktuelles Passwort</label><input type="password" name="old" required><label>Neues Passwort (mindestens 12 Zeichen)</label><input type="password" name="new" minlength="12" required><label>Neues Passwort wiederholen</label><input type="password" name="confirm" minlength="12" required><p><button>Passwort ändern</button></p></form></section>'''
                 self.send_html(layout('Passwort',content,user,csrf));return
+            if path in ('/export-pdf','/export-xlsx'):
+                month=params.get('month',[datetime.now(VIENNA).strftime('%Y-%m')])[0]
+                if not re.fullmatch(r'\d{4}-(0[1-9]|1[012])', month):
+                    self.send_html(layout('Fehler','Ungültiger Monat',user,csrf),400);return
+                report_rows=[]
+                for record in allowed_records(db,user):
+                    if parse_dt(record['started_at']).astimezone(VIENNA).strftime('%Y-%m')!=month:
+                        continue
+                    net,pause=shift_minutes(db,record)
+                    report_rows.append([
+                        record['name'],local(record['started_at']),
+                        local(record['ended_at']),pause,net,
+                        f'{net/60:.2f}'.replace('.',',')])
+                if path=='/export-pdf':
+                    data=make_pdf(report_rows,month)
+                    mime='application/pdf'
+                    ext='pdf'
+                else:
+                    data=make_xlsx(report_rows,month)
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                    ext='xlsx'
+                self.send_response(200)
+                self.send_header('Content-Type',mime)
+                self.send_header('Content-Disposition',f'attachment; filename="arbeitszeit-{month}.{ext}"')
+                self.send_header('Content-Length',str(len(data)))
+                self.send_header('Cache-Control','no-store')
+                self.send_header('X-Content-Type-Options','nosniff')
+                self.send_header('Referrer-Policy','no-referrer')
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if path=='/export':
                 month=params.get('month',[datetime.now(VIENNA).strftime('%Y-%m')])[0]
                 if not re.fullmatch(r'\d{4}-(0[1-9]|1[012])', month):
