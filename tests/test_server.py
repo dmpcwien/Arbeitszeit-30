@@ -83,6 +83,35 @@ class ArbeitszeitTests(unittest.TestCase):
         self.assertEqual(app.csv_safe_cell("Normaler Name"), "Normaler Name")
         self.assertEqual(app.csv_safe_cell(None), "")
 
+    def test_duplicate_request_token_is_idempotent(self):
+        with app.conn() as db:
+            worker, _ = self.accounts(db)
+            token = "fixed_unique_token_0001"
+            self.assertTrue(app.punch_once(db, worker["id"], "start", token))
+            self.assertFalse(app.punch_once(db, worker["id"], "start", token))
+            count = db.execute("SELECT COUNT(*) FROM shifts WHERE user_id=?", (worker["id"],)).fetchone()[0]
+            self.assertEqual(count, 1)
+            with self.assertRaises(ValueError):
+                app.punch_once(db, worker["id"], "stop", "bad")
+
+    def test_calendar_is_private_and_team_filter_limits_rows(self):
+        with app.conn() as db:
+            worker, admin = self.accounts(db)
+            db.execute("INSERT INTO shifts(user_id,started_at,ended_at) VALUES(?,?,?)",
+                       (worker["id"], "2026-11-04T08:00:00+00:00",
+                        "2026-11-04T15:00:00+00:00"))
+            cal = app.calendar_page(db, worker, "2026-11")
+            self.assertIn("Mein Monatskalender", cal)
+            self.assertIn("7:00 h", cal)
+            self.assertNotIn("Admin", cal)
+            app.punch(db, worker["id"], "start")
+            working = app.team_status_page(db, admin, "working")
+            self.assertIn("Mitarbeiter &lt;Test&gt;", working)
+            self.assertNotIn("<td>Admin</td>", working)
+            absent = app.team_status_page(db, admin, "absent")
+            self.assertIn("<td>Admin</td>", absent)
+            self.assertNotIn("Mitarbeiter &lt;Test&gt;", absent)
+
     def test_totp_rfc_vector_and_wrong_code(self):
         import base64
         secret = base64.b32encode(b"12345678901234567890").decode("ascii").rstrip("=")
