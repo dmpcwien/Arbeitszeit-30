@@ -30,8 +30,9 @@ VIENNA = ZoneInfo('Europe/Vienna')
 UTC = timezone.utc
 DATA_DIR = Path(os.getenv('APP_DATA_DIR', Path(__file__).resolve().parent / 'data'))
 DB_PATH = DATA_DIR / 'arbeitszeit.sqlite3'
-SUPER_EMAIL = 'dmpcwien@gmail.com'
-ADMIN_EMAIL = 'konrad.hillbrand@uni-ak.ac.at'
+SUPER_EMAIL = os.getenv('APP_SUPER_EMAIL', '').strip()
+ADMIN_EMAIL = os.getenv('APP_ADMIN_EMAIL', '').strip()
+ADMIN_NAME = os.getenv('APP_ADMIN_NAME', 'Administrator').strip()
 CAPACITY = 30
 SESSION_SECONDS = 12 * 3600
 MAX_BODY = 16 * 1024
@@ -736,9 +737,12 @@ def bootstrap():
         if db.execute('SELECT count(*) FROM users').fetchone()[0]:
             print('Es existieren bereits Benutzer. Initialisierung wurde nicht wiederholt.')
             return
+        if not SUPER_EMAIL or not ADMIN_EMAIL or SUPER_EMAIL.lower()==ADMIN_EMAIL.lower():
+            print('Bitte APP_SUPER_EMAIL und APP_ADMIN_EMAIL mit verschiedenen Adressen setzen.', file=sys.stderr)
+            sys.exit(2)
         print('Initialisiere Arbeitszeit 30. Die Startpasswörter werden nur einmal ausgegeben.\n')
         sup = create_user(db,None,'Superadministrator',SUPER_EMAIL,'superadmin')
-        adm = create_user(db,None,'Konrad Hillbrand',ADMIN_EMAIL,'admin')
+        adm = create_user(db,None,ADMIN_NAME,ADMIN_EMAIL,'admin')
         print(f'SUPERADMIN: {SUPER_EMAIL}\nStartpasswort: {sup}\n')
         print(f'ADMIN: {ADMIN_EMAIL}\nStartpasswort: {adm}\n')
         print('WICHTIG: Passwörter privat sichern, beim ersten Login ändern; nicht im Quellcode speichern.')
