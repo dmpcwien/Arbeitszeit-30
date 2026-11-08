@@ -177,8 +177,8 @@ class MehrbenutzerHttpTests(unittest.TestCase):
     def test_admin_mfa_guard_when_required(self):
         previous = app.REQUIRE_ADMIN_MFA
         try:
-            app.REQUIRE_ADMIN_MFA = True
             admin = self.login("admin@example.invalid")
+            app.REQUIRE_ADMIN_MFA = True
             status, page = self.request(admin, "/admin")
             self.assertEqual(status, 200)
             self.assertIn("Für die Verwaltung ist MFA erforderlich", page)
