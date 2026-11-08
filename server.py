@@ -265,6 +265,52 @@ def fmt_minutes(m):
     return f'{m // 60}:{m % 60:02d} h'
 
 
+def csv_safe_cell(value):
+    """Protect exported text from spreadsheet formula execution."""
+    text = str(value if value is not None else '')
+    if text.lstrip().startswith(('=', '+', '-', '@')) or text.startswith(('\t', '\r', '\n')):
+        return "'" + text
+    return text
+
+
+def team_status_page(db, user):
+    """Show active punch states to administration, not a location/attendance claim."""
+    if user['role'] == 'employee':
+        raise PermissionError('Nur die Verwaltung darf den Teamstatus sehen.')
+    members = db.execute(
+        'SELECT id,name FROM users WHERE active=1 ORDER BY name'
+    ).fetchall()
+    rows = '<tr><th>Mitarbeiter</th><th>Status</th><th>Beginn</th><th>Netto bisher</th></tr>'
+    working = paused = not_punched = 0
+    for member in members:
+        shift = get_open_shift(db, member['id'])
+        if not shift:
+            not_punched += 1
+            status, started, minutes = 'Nicht eingestempelt', '–', '–'
+        else:
+            brk = get_open_break(db, shift['id'])
+            if brk:
+                paused += 1
+                status = 'In Pause seit ' + local(brk['started_at'])
+            else:
+                working += 1
+                status = 'Im Dienst'
+            started = local(shift['started_at'])
+            minutes = fmt_minutes(shift_minutes(db, shift)[0])
+        rows += (f'<tr><td>{esc(member["name"])}</td><td>{esc(status)}</td>'
+                 f'<td>{esc(started)}</td><td>{esc(minutes)}</td></tr>')
+    total = len(members)
+    return (f'<h2>Teamstatus</h2><div class="grid">'
+            f'<section class="card"><h2>Im Dienst</h2><div class="metric">{working}</div></section>'
+            f'<section class="card"><h2>In Pause</h2><div class="metric">{paused}</div></section>'
+            f'<section class="card"><h2>Nicht eingestempelt</h2><div class="metric">{not_punched}</div></section>'
+            f'</div><section class="card"><div class="bar"><h2>Alle aktiven Konten ({total})</h2>'
+            f'<a class="btn subtle" href="/team">Aktualisieren</a></div>'
+            f'<p class="small muted">Stand: {esc(datetime.now(VIENNA).strftime("%d.%m.%Y %H:%M"))} Uhr. '
+            f'Angezeigt wird der Buchungsstatus, keine Standort- oder Anwesenheitsprüfung.</p>'
+            f'<div class="tablewrap"><table class="table">{rows}</table></div></section>')
+
+
 CSS = '''
 :root{font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;color:#172335;background:#f4f7fb;color-scheme:light}*{box-sizing:border-box}body{margin:0}a{color:#1959b7;text-decoration:none}a:hover{text-decoration:underline}header{background:#10243c;color:white;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap}header a{color:#dfeaf7}header h1{font-size:19px;margin:0}main{max-width:1100px;margin:28px auto;padding:0 16px 60px}.bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.muted{color:#617083}.small{font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:16px;margin:18px 0}.card{background:white;padding:22px;border-radius:14px;border:1px solid #e0e8f3;box-shadow:0 2px 10px #16283f09}.card h2{font-size:18px;margin:0 0 16px}.metric{font-size:36px;font-weight:700;letter-spacing:-1px}button,.btn{cursor:pointer;border:0;border-radius:9px;padding:12px 16px;font-size:15px;font-weight:650;background:#225fbc;color:white;display:inline-block;text-decoration:none}button:hover,.btn:hover{filter:brightness(.94);text-decoration:none}.subtle{background:#eaf0f7;color:#243852}.danger{background:#b93841;color:white}button:disabled{opacity:.55;cursor:not-allowed}form.inline{display:inline}label{display:block;font-size:14px;font-weight:650;margin:12px 0 6px}input,select,textarea{border-radius:9px;width:100%;padding:11px 12px;border:1px solid #bfcddd;font-size:15px;background:#fff;color:#172335}textarea{min-height:88px}.field{max-width:420px}.pill{display:inline-block;background:#e6efff;color:#2056a2;padding:6px 9px;border-radius:30px;font-size:12px;font-weight:650}.flash{padding:14px 16px;border-radius:10px;background:#e4f5ed;color:#155c37;margin:14px 0}.err{background:#ffe9eb;color:#9e1d2a}.tablewrap{overflow:auto}.table{width:100%;border-collapse:collapse;font-size:14px}.table th{text-align:left;color:#657385;font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding:12px}.table td{padding:12px;border-top:1px solid #e7edf4;white-space:nowrap}.table tr:hover td{background:#f9fbfd}.buttons{display:flex;gap:8px;flex-wrap:wrap}.quiet{border:1px solid #cedaea;border-radius:10px;background:#f7fafc;padding:16px}.warn{background:#fff2d7;color:#784a00;padding:11px 14px;border-radius:9px}nav{display:flex;gap:15px;flex-wrap:wrap}nav a{font-size:14px}.badge{font-size:12px;color:#506278}.mobileTitle{display:none}@media(max-width:640px){header{padding:16px}main{margin:16px auto;padding:0 12px 40px}.card{padding:17px}button{min-height:46px}.buttons button{flex:1}.metric{font-size:30px}}
 '''
@@ -279,7 +325,7 @@ def layout(title, content, user=None, csrf='', notice='', error=''):
     if user:
         role = {'employee':'Mitarbeiter','admin':'Administrator','superadmin':'Superadministrator'}[user['role']]
         menu = (f'<nav><a href="/">Stempeluhr</a><a href="/records">Zeiten</a>'
-                + ('<a href="/admin">Verwaltung</a><a href="/audit">Protokoll</a>' if user['role'] != 'employee' else '')
+                + ('<a href="/team">Teamstatus</a><a href="/admin">Verwaltung</a><a href="/audit">Protokoll</a>' if user['role'] != 'employee' else '')
                 + ('<a href="/access">Zugriffsfreigaben</a>' if user['role'] == 'superadmin' else '')
                 + f'<a href="/password">Passwort</a><form method="POST" action="/logout" class="inline">{csrf_input(csrf)}<button class="subtle" type="submit">Abmelden</button></form></nav>')
         menu = f'<div class="bar"><span class="small">{esc(user["name"])} · {role}</span>{menu}</div>'
@@ -353,7 +399,7 @@ def admin_page(db, user, csrf):
             act = '–'
         lines += f'<tr><td>{esc(u["name"])}</td><td>{esc(u["email"])}</td><td>{role}</td><td>{"Aktiv" if u["active"] else "Inaktiv"}</td><td>{act}</td></tr>'
     roles = '<option value="employee">Mitarbeiter</option>' + ('<option value="admin">Administrator</option>' if user['role']=='superadmin' else '')
-    return f'''<h2>Verwaltung</h2><div class="grid"><section class="card"><h2>Benutzerkonten</h2><div class="metric">{count} / {CAPACITY}</div><p class="small muted">Aktive Konten einschließlich Verwaltung</p><a href="/records">Stundenübersicht öffnen →</a></section><section class="card"><h2>Neuen Zugang erstellen</h2><form method="POST" action="/create-user">{csrf_input(csrf)}<label>Name</label><input name="name" maxlength="100" required><label>E-Mail</label><input name="email" type="email" required><label>Rolle</label><select name="role">{roles}</select><p><button>Konto erstellen</button></p><p class="small muted">Das einmalige Startpasswort wird auf der nächsten Seite angezeigt.</p></form></section></div><section class="card"><h2>Konten und Berechtigungen</h2><div class="tablewrap"><table class="table">{lines}</table></div><p class="small muted">Administratoren dürfen keine Superadministrator-Konten verändern. Berechtigungen und Korrekturen werden protokolliert.</p></section>'''
+    return f'''<h2>Verwaltung</h2><div class="grid"><section class="card"><h2>Benutzerkonten</h2><div class="metric">{count} / {CAPACITY}</div><p class="small muted">Aktive Konten einschließlich Verwaltung</p><a href="/records">Stundenübersicht öffnen →</a><p><a href="/team">Aktuellen Teamstatus ansehen →</a></p></section><section class="card"><h2>Neuen Zugang erstellen</h2><form method="POST" action="/create-user">{csrf_input(csrf)}<label>Name</label><input name="name" maxlength="100" required><label>E-Mail</label><input name="email" type="email" required><label>Rolle</label><select name="role">{roles}</select><p><button>Konto erstellen</button></p><p class="small muted">Das einmalige Startpasswort wird auf der nächsten Seite angezeigt.</p></form></section></div><section class="card"><h2>Konten und Berechtigungen</h2><div class="tablewrap"><table class="table">{lines}</table></div><p class="small muted">Administratoren dürfen keine Superadministrator-Konten verändern. Berechtigungen und Korrekturen werden protokolliert.</p></section>'''
 
 
 
@@ -396,7 +442,7 @@ def audit_page(db):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version='Arbeitszeit30/1.2'
+    server_version='Arbeitszeit30/1.7'
     sys_version=''
 
     def log_message(self, format, *args):
@@ -517,6 +563,8 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/records':
                 month=params.get('month',[datetime.now(VIENNA).strftime('%Y-%m')])[0]
                 self.send_html(layout('Zeiten',records_page(db,user,csrf,month),user,csrf));return
+            if path=='/team' and user['role']!='employee':
+                self.send_html(layout('Teamstatus',team_status_page(db,user),user,csrf));return
             if path=='/admin' and user['role']!='employee':
                 self.send_html(layout('Verwaltung',admin_page(db,user,csrf),user,csrf));return
             if path=='/access' and user['role']=='superadmin':
@@ -545,7 +593,7 @@ class Handler(BaseHTTPRequestHandler):
                 out=io.StringIO();w=csv.writer(out,delimiter=';');w.writerow(['Name','Beginn (Wien)','Ende (Wien)','Pause Minuten','Netto Minuten','Netto Stunden'])
                 for r in rows:
                     net,pause=shift_minutes(db,r)
-                    w.writerow([r['name'],local(r['started_at']),local(r['ended_at']),pause,net,f'{net/60:.2f}'.replace('.',',')])
+                    w.writerow([csv_safe_cell(r['name']),local(r['started_at']),local(r['ended_at']),pause,net,f'{net/60:.2f}'.replace('.',',')])
                 data= ('\ufeff'+out.getvalue()).encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type','text/csv; charset=utf-8')
