@@ -17,6 +17,14 @@ jobs:
       - name: Repository laden
         uses: actions/checkout@v4
 
+      - name: Python 3.12 installieren
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Backend-Tests ausführen
+        run: python -m unittest discover -s tests -v
+
       - name: Java 17 installieren
         uses: actions/setup-java@v4
         with:
@@ -79,8 +87,8 @@ jobs:
                   applicationId 'at.arbeitszeit.zeitkonto'
                   minSdk 26
                   targetSdk 34
-                  versionCode 16
-                  versionName '1.6.0'
+                  versionCode 17
+                  versionName '1.7.0'
               }
 
               compileOptions {
