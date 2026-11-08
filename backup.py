@@ -24,7 +24,7 @@ def backup_once(source=SOURCE_DB, target_dir=BACKUP_DIR, keep=30):
         raise ValueError("Aufbewahrung muss 2 bis 365 Sicherungen betragen.")
     target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(target_dir, 0o700)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     final = target_dir / f"arbeitszeit-{stamp}-{os.getpid()}.sqlite3"
     temporary = target_dir / (final.name + ".part")
     try:
