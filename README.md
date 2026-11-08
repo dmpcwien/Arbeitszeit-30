@@ -1,5 +1,7 @@
 # Arbeitszeit 30
 
+[![APK & Tests](https://github.com/dmpcwien/Arbeitszeit-30/actions/workflows/build-apk.yml/badge.svg?branch=main)](https://github.com/dmpcwien/Arbeitszeit-30/actions/workflows/build-apk.yml)
+
 Interne Zeiterfassung als Übergangslösung für bis zu 30 aktive Konten in VZA7.
 Die App erfasst **gebuchte** Arbeitszeiten, Pausen und Korrekturen. Sie ist
 **kein** automatischer Anwesenheitsnachweis und keine fertige Lohnabrechnung.
@@ -58,6 +60,14 @@ Der Python-Server sollte lokal gebunden bleiben. Nicht direkt unverschlüsselt
 ins Internet stellen. Externe Zugriffsfreigaben ersetzen keine IT-Freigabe,
 Gerätekontrolle oder MFA. Bei verteiltem oder besonders hohem Lastbetrieb
 wäre eine professionelle Server-/Datenbanklösung erforderlich.
+
+## Mehrbenutzer-Integrationstests
+
+Die Testdatei tests/test_http_integration.py simuliert drei unabhängige Konten
+in einem lokalen HTTP-Server mit temporärer Datenbank. Sie überprüft Login,
+Arbeitsbeginn, Pause, Feierabend, eingeschränkte Mitarbeiteransichten,
+Admin-Teamstatus, CSV-Export, CSRF-Schutz und das Sperren eines Kontos.
+Es werden keine produktiven Benutzer oder echten Universitätsserver verwendet.
 
 ## Android-APK
 
