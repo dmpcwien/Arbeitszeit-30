@@ -113,6 +113,29 @@ class ArbeitszeitTests(unittest.TestCase):
             self.assertIn("<td>Admin</td>", absent)
             self.assertNotIn("Mitarbeiter &lt;Test&gt;", absent)
 
+    def test_live_elapsed_clock_subtracts_break_and_stays_read_only(self):
+        with app.conn() as db:
+            worker, _ = self.accounts(db)
+            cursor = db.execute(
+                "INSERT INTO shifts(user_id,started_at,ended_at) VALUES(?,?,?)",
+                (worker["id"], "2026-11-08T08:00:00+00:00",
+                 "2026-11-08T11:15:00+00:00"))
+            db.execute("INSERT INTO breaks(shift_id,started_at,ended_at) VALUES(?,?,?)",
+                       (cursor.lastrowid, "2026-11-08T09:00:00+00:00",
+                        "2026-11-08T09:15:00+00:00"))
+            shift = db.execute("SELECT * FROM shifts WHERE id=?", (cursor.lastrowid,)).fetchone()
+            before = db.execute("SELECT COUNT(*) FROM shifts").fetchone()[0]
+            self.assertEqual(app.shift_net_seconds(db, shift), 10800)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM shifts").fetchone()[0], before)
+
+    def test_page_only_loads_same_origin_script_when_logged_in(self):
+        with app.conn() as db:
+            worker, _ = self.accounts(db)
+            logged_in = app.layout("Test", "Hallo", worker, "csrf-value")
+            anon = app.start_page()
+            self.assertIn('src="/static/dashboard.js"', logged_in)
+            self.assertNotIn('src="/static/dashboard.js"', anon)
+
     def test_weekly_target_calculation_is_not_payroll(self):
         with app.conn() as db:
             worker, _ = self.accounts(db)
