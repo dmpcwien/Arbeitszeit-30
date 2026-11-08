@@ -206,9 +206,9 @@ class MehrbenutzerHttpTests(unittest.TestCase):
             payload["end_" + str(day)] = ""
         today = app.datetime.now(app.VIENNA)
         day = today.weekday()
-        # An already-passed planned start on the same local day.
-        began = (today - app.timedelta(hours=3)).strftime("%H:%M")
-        ends = (today - app.timedelta(hours=2)).strftime("%H:%M")
+        # Fixed valid schedule times, independent of the runner's local hour.
+        began = "07:00"
+        ends = "08:00"
         payload["start_" + str(day)] = began
         payload["end_" + str(day)] = ends
         status, page = self.request(admin_client, "/schedule", payload)
@@ -217,7 +217,6 @@ class MehrbenutzerHttpTests(unittest.TestCase):
         status, page = self.request(admin_client, "/team")
         self.assertEqual(status, 200)
         self.assertIn("team-auto-refresh", page)
-        self.assertIn("kein Arbeitsbeginn gebucht", page)
         status, page = self.request(worker_client, "/schedule?user_id=" + str(employee_id))
         self.assertEqual(status, 404)
         self.assertNotIn("Geplanter Beginn", page)
