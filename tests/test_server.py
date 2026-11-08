@@ -131,10 +131,14 @@ class ArbeitszeitTests(unittest.TestCase):
     def test_page_only_loads_same_origin_script_when_logged_in(self):
         with app.conn() as db:
             worker, _ = self.accounts(db)
+            # First-login users are redirected to password change, so no dashboard JS.
+            self.assertNotIn('src="/static/dashboard.js"',
+                             app.layout("Test", "Hallo", worker, "csrf-value"))
+            db.execute("UPDATE users SET must_change=0 WHERE id=?", (worker['id'],))
+            worker = db.execute("SELECT * FROM users WHERE id=?", (worker['id'],)).fetchone()
             logged_in = app.layout("Test", "Hallo", worker, "csrf-value")
-            anon = app.start_page()
             self.assertIn('src="/static/dashboard.js"', logged_in)
-            self.assertNotIn('src="/static/dashboard.js"', anon)
+            self.assertNotIn('src="/static/dashboard.js"', app.start_page())
 
     def test_weekly_target_calculation_is_not_payroll(self):
         with app.conn() as db:
