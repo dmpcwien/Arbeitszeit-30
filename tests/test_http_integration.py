@@ -169,6 +169,30 @@ class MehrbenutzerHttpTests(unittest.TestCase):
             count = db.execute("SELECT count(*) FROM shifts WHERE user_id=?", (uid,)).fetchone()[0]
             self.assertEqual(count, 1)
 
+    def test_monthly_pdf_xlsx_downloads_do_not_expose_other_employees(self):
+        import io
+        from zipfile import ZipFile
+        employee_a = self.login("a@example.invalid")
+        employee_b = self.login("b@example.invalid")
+        self.punch(employee_a, "a@example.invalid", "start")
+        self.punch(employee_a, "a@example.invalid", "stop")
+        self.punch(employee_b, "b@example.invalid", "start")
+        self.punch(employee_b, "b@example.invalid", "stop")
+        month = app.datetime.now(app.VIENNA).strftime("%Y-%m")
+        address = "http://127.0.0.1:%d" % self.port
+        with employee_a.open(address + "/export-xlsx?month=" + month, timeout=10) as res:
+            self.assertEqual(res.status, 200)
+            self.assertIn("spreadsheetml.sheet", res.headers["Content-Type"])
+            data = res.read()
+        with ZipFile(io.BytesIO(data)) as book:
+            sheet = book.read("xl/worksheets/sheet1.xml").decode("utf-8")
+            self.assertIn("Testperson A", sheet)
+            self.assertNotIn("Testperson B", sheet)
+        with employee_a.open(address + "/export-pdf?month=" + month, timeout=10) as res:
+            self.assertEqual(res.status, 200)
+            self.assertEqual(res.headers["Content-Type"], "application/pdf")
+            self.assertTrue(res.read(5).startswith(b"%PDF-"))
+
     def test_mfa_enrollment_and_second_factor_login(self):
         a = self.login("a@example.invalid")
         status, _ = self.request(a, "/mfa-start", {"csrf": self.csrf("a@example.invalid")})
