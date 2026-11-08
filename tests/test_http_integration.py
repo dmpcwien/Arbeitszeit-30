@@ -193,6 +193,35 @@ class MehrbenutzerHttpTests(unittest.TestCase):
             self.assertEqual(res.headers["Content-Type"], "application/pdf")
             self.assertTrue(res.read(5).startswith(b"%PDF-"))
 
+    def test_schedule_edit_team_warning_and_live_visibility(self):
+        admin_client = self.login("admin@example.invalid")
+        worker_client = self.login("a@example.invalid")
+        with app.conn() as db:
+            worker = db.execute("SELECT * FROM users WHERE email='a@example.invalid'").fetchone()
+            employee_id = worker["id"]
+        payload = {"csrf": self.csrf("admin@example.invalid"),
+                   "user_id": employee_id}
+        for day in range(7):
+            payload["start_" + str(day)] = ""
+            payload["end_" + str(day)] = ""
+        today = app.datetime.now(app.VIENNA)
+        day = today.weekday()
+        # An already-passed planned start on the same local day.
+        began = (today - app.timedelta(hours=3)).strftime("%H:%M")
+        ends = (today - app.timedelta(hours=2)).strftime("%H:%M")
+        payload["start_" + str(day)] = began
+        payload["end_" + str(day)] = ends
+        status, page = self.request(admin_client, "/schedule", payload)
+        self.assertEqual(status, 200)
+        self.assertIn("Dienstzeiten:", page)
+        status, page = self.request(admin_client, "/team")
+        self.assertEqual(status, 200)
+        self.assertIn("team-auto-refresh", page)
+        self.assertIn("kein Arbeitsbeginn gebucht", page)
+        status, page = self.request(worker_client, "/schedule?user_id=" + str(employee_id))
+        self.assertEqual(status, 404)
+        self.assertNotIn("Geplanter Beginn", page)
+
     def test_mfa_enrollment_and_second_factor_login(self):
         a = self.login("a@example.invalid")
         status, _ = self.request(a, "/mfa-start", {"csrf": self.csrf("a@example.invalid")})
