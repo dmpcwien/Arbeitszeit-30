@@ -6,8 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_SECURE_COOKIES=1
 RUN groupadd --gid 10001 arbeitszeit \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin arbeitszeit \
-    && mkdir -p /srv/app /data \
-    && chown -R 10001:10001 /srv/app /data
+    && mkdir -p /srv/app /data /backups \
+    && chown -R 10001:10001 /srv/app /data /backups
 WORKDIR /srv/app
 COPY --chown=10001:10001 server.py backup.py /srv/app/
 USER 10001:10001
