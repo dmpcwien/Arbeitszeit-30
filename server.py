@@ -311,6 +311,19 @@ def shift_minutes(db, shift, now=None):
     return max(0, total - pause), pause
 
 
+def shift_net_seconds(db, shift, now=None):
+    """Exact elapsed net seconds for a read-only client display."""
+    now = now or utc_now()
+    start = parse_dt(shift['started_at'])
+    end = parse_dt(shift['ended_at'] or now)
+    total = max(0, int((end - start).total_seconds()))
+    pause = 0
+    for brk in db.execute('SELECT * FROM breaks WHERE shift_id=?', (shift['id'],)):
+        brk_end = parse_dt(brk['ended_at'] or shift['ended_at'] or now)
+        pause += max(0, int((brk_end - parse_dt(brk['started_at'])).total_seconds()))
+    return max(0, total-pause)
+
+
 def fmt_minutes(m):
     return f'{m // 60}:{m % 60:02d} h'
 
@@ -532,6 +545,7 @@ def team_status_page(db, user, status_filter='all'):
 
 
 CSS = '''
+.liveclock output{font-size:clamp(28px,5vw,42px);font-weight:750;letter-spacing:-.035em;display:block;margin:12px 0}.liveclock:empty{display:none}
 .calendar td{vertical-align:top;min-width:95px;white-space:normal;height:88px}.calendar .calhours{font-weight:750;margin:4px 0}.calendar .calempty{background:#f4f7fb}.calendar strong{font-size:15px}
 .hero{border:1px solid #aac2e5;background:linear-gradient(120deg,#fff,#eaf2fc)}.state{font-size:21px;font-weight:750;margin:16px 0}.state.working{color:#146b47}.state.pause{color:#995c0f}.state.muted{color:#506278}.primary-actions{margin:18px 0}.punchbtn{min-height:54px;min-width:160px;font-size:17px}.card+.card{margin-top:18px}@media(max-width:640px){.primary-actions form{width:100%}.punchbtn{width:100%}}
 :root{font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;color:#172335;background:#f4f7fb;color-scheme:light}*{box-sizing:border-box}body{margin:0}a{color:#1959b7;text-decoration:none}a:hover{text-decoration:underline}header{background:#10243c;color:white;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap}header a{color:#dfeaf7}header h1{font-size:19px;margin:0}main{max-width:1100px;margin:28px auto;padding:0 16px 60px}.bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.muted{color:#617083}.small{font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:16px;margin:18px 0}.card{background:white;padding:22px;border-radius:14px;border:1px solid #e0e8f3;box-shadow:0 2px 10px #16283f09}.card h2{font-size:18px;margin:0 0 16px}.metric{font-size:36px;font-weight:700;letter-spacing:-1px}button,.btn{cursor:pointer;border:0;border-radius:9px;padding:12px 16px;font-size:15px;font-weight:650;background:#225fbc;color:white;display:inline-block;text-decoration:none}button:hover,.btn:hover{filter:brightness(.94);text-decoration:none}.subtle{background:#eaf0f7;color:#243852}.danger{background:#b93841;color:white}button:disabled{opacity:.55;cursor:not-allowed}form.inline{display:inline}label{display:block;font-size:14px;font-weight:650;margin:12px 0 6px}input,select,textarea{border-radius:9px;width:100%;padding:11px 12px;border:1px solid #bfcddd;font-size:15px;background:#fff;color:#172335}textarea{min-height:88px}.field{max-width:420px}.pill{display:inline-block;background:#e6efff;color:#2056a2;padding:6px 9px;border-radius:30px;font-size:12px;font-weight:650}.flash{padding:14px 16px;border-radius:10px;background:#e4f5ed;color:#155c37;margin:14px 0}.err{background:#ffe9eb;color:#9e1d2a}.tablewrap{overflow:auto}.table{width:100%;border-collapse:collapse;font-size:14px}.table th{text-align:left;color:#657385;font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding:12px}.table td{padding:12px;border-top:1px solid #e7edf4;white-space:nowrap}.table tr:hover td{background:#f9fbfd}.buttons{display:flex;gap:8px;flex-wrap:wrap}.quiet{border:1px solid #cedaea;border-radius:10px;background:#f7fafc;padding:16px}.warn{background:#fff2d7;color:#784a00;padding:11px 14px;border-radius:9px}nav{display:flex;gap:15px;flex-wrap:wrap}nav a{font-size:14px}.badge{font-size:12px;color:#506278}.mobileTitle{display:none}@media(max-width:640px){header{padding:16px}main{margin:16px auto;padding:0 12px 40px}.card{padding:17px}button{min-height:46px}.buttons button{flex:1}.metric{font-size:30px}}
@@ -628,7 +642,8 @@ def layout(title, content, user=None, csrf='', notice='', error=''):
                 + f'<a href="/calendar">Kalender</a><a href="/corrections">Korrekturen</a><a href="/security">Sicherheit</a><a href="/password">Passwort</a><form method="POST" action="/logout" class="inline">{csrf_input(csrf)}<button class="subtle" type="submit">Abmelden</button></form></nav>')
         menu = f'<div class="bar"><span class="small">{esc(user["name"])} · {role}</span>{menu}</div>'
     flash = ('<div class="flash">'+esc(notice)+'</div>' if notice else '') + ('<div class="flash err">'+esc(error)+'</div>' if error else '')
-    return f'''<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#10243c"><title>{esc(title)} · Arbeitszeit 30</title><style>{CSS}</style></head><body><header><h1>◷ Arbeitszeit 30</h1>{menu}</header><main>{flash}{content}</main></body></html>'''
+    script = '<script src="/static/dashboard.js" defer></script>' if user else ''
+    return f'''<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#10243c"><title>{esc(title)} · Arbeitszeit 30</title><style>{CSS}</style>{script}</head><body><header><h1>◷ Arbeitszeit 30</h1>{menu}</header><main><p id="connection-status" class="warn" hidden></p>{flash}{content}</main></body></html>'''
 
 
 def start_page():
@@ -696,6 +711,11 @@ def dashboard(db, user, csrf):
     pending_notice = (f'<p class="quiet">Du hast {open_requests} offene Korrekturanträge. '
                       '<a href="/corrections">Anträge ansehen</a></p>'
                       if open_requests else '')
+    live_seconds = shift_net_seconds(db, sh) if sh else 0
+    live = (f'<div class="small muted">Nettozeit der aktuellen Schicht</div>'
+            f'<output id="live-work-time" aria-live="off" '
+            f'data-seconds="{live_seconds}" data-running="{1 if sh and not br else 0}">'
+            f'{fmt_minutes(live_seconds // 60)}</output>' if sh else '')
     target_text = (f'<div class="small muted">Soll: {fmt_minutes(target)} · '
                    f'Differenz: {"+" if difference >= 0 else "−"}{fmt_minutes(abs(difference))}</div>'
                    if difference is not None else
@@ -703,7 +723,7 @@ def dashboard(db, user, csrf):
     return (f'<h2>Meine Stempeluhr</h2>'
             f'<section class="card hero"><h2>Aktueller Status</h2><div class="state {variant}">{esc(status)}</div>'
             f'<p class="small muted">Buchungszeit laut Server · Zeitzone Europa/Wien</p>'
-            f'<div class="buttons primary-actions">{buttons}</div>{warn}{pending_notice}'
+            f'<div class="liveclock">{live}</div><div class="buttons primary-actions">{buttons}</div>{warn}{pending_notice}'
             f'<p><a href="/corrections">Fehlende Buchung oder Korrektur beantragen</a></p></section>'
             f'<div class="grid"><section class="card"><h2>Heute</h2>'
             f'<div class="metric">{fmt_minutes(today_minutes)}</div></section>'
@@ -848,7 +868,7 @@ def audit_page(db):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version='Arbeitszeit30/1.7'
+    server_version='Arbeitszeit30/1.9'
     sys_version=''
 
     def log_message(self, format, *args):
@@ -862,7 +882,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('X-Frame-Options','DENY')
         self.send_header('Referrer-Policy','no-referrer')
-        self.send_header('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+        self.send_header('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         if SECURE_COOKIES:
             self.send_header('Strict-Transport-Security','max-age=31536000')
         for k,v in (extra or []):
@@ -878,7 +898,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('X-Frame-Options','DENY')
         self.send_header('Referrer-Policy','no-referrer')
-        self.send_header('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+        self.send_header('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         if SECURE_COOKIES:
             self.send_header('Strict-Transport-Security','max-age=31536000')
         for k,v in (extra or []):
@@ -965,6 +985,21 @@ class Handler(BaseHTTPRequestHandler):
             if REQUIRE_ADMIN_MFA and user['role']!='employee' and not user['mfa_secret'] and path not in ('/security','/password'):
                 self.redirect('/security');return
             csrf=user['csrf']
+            if path=='/static/dashboard.js':
+                script_file = Path(__file__).resolve().parent / 'static' / 'dashboard.js'
+                try:
+                    script_data = script_file.read_bytes()
+                except OSError:
+                    self.send_html('Skript nicht verfügbar.',500);return
+                self.send_response(200)
+                self.send_header('Content-Type','text/javascript; charset=utf-8')
+                self.send_header('Content-Length',str(len(script_data)))
+                self.send_header('Cache-Control','private, max-age=3600')
+                self.send_header('X-Content-Type-Options','nosniff')
+                self.send_header('Referrer-Policy','no-referrer')
+                self.end_headers()
+                self.wfile.write(script_data)
+                return
             if path=='/security':
                 self.send_html(layout('Kontosicherheit',security_page(user,csrf),user,csrf));return
             if path=='/':
