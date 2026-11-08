@@ -4,6 +4,7 @@ Die Aufrufer filtern die Zeilen nach Benutzerrolle und Monat, bevor sie an
 diese Funktionen übergeben werden. Keine Dateispeicherung am Server.
 """
 from io import BytesIO
+from decimal import Decimal, InvalidOperation
 from html import escape as html_escape
 from xml.sax.saxutils import escape as xml_escape
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -50,6 +51,14 @@ def make_xlsx(records, month):
                 if not isinstance(value, int) or value < 0:
                     raise ValueError("Minuten müssen nichtnegative ganze Zahlen sein.")
                 cells.append(f'<c r="{address}"><v>{value}</v></c>')
+            elif column == 6:
+                try:
+                    hours = Decimal(str(value).replace(",", "."))
+                except InvalidOperation:
+                    raise ValueError("Stundenzahl ist ungültig.")
+                if not hours.is_finite() or hours < 0:
+                    raise ValueError("Stundenzahl ist ungültig.")
+                cells.append(f'<c r="{address}" s="3"><v>{hours:.2f}</v></c>')
             else:
                 cells.append(f'<c r="{address}" t="inlineStr"><is><t>'
                              f'{xml_escape(_spreadsheet_text(value))}</t></is></c>')
@@ -77,9 +86,10 @@ def make_xlsx(records, month):
               '<bgColor indexed="64"/></patternFill></fill></fills>'
               '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
               '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-              '<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+              '<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
               '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
               '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
+              '<xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
               '</cellXfs></styleSheet>')
     content_types = ('<?xml version="1.0" encoding="UTF-8"?>'
                      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
