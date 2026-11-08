@@ -8,6 +8,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 import tempfile
+import secrets
 import unittest
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -92,7 +93,7 @@ class MehrbenutzerHttpTests(unittest.TestCase):
 
     def punch(self, client, email, action):
         status, page = self.request(
-            client, "/punch", {"csrf": self.csrf(email), "action": action}
+            client, "/punch", {"csrf": self.csrf(email), "action": action, "request_id": secrets.token_urlsafe(16)}
         )
         self.assertEqual(status, 200, page[:300])
         return page
