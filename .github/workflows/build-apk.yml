@@ -105,8 +105,27 @@ jobs:
                   applicationId 'at.arbeitszeit.zeitkonto'
                   minSdk 26
                   targetSdk 34
-                  versionCode 20
-                  versionName '1.10.0'
+                  versionCode 21
+                  versionName '1.11.0'
+              }
+
+              signingConfigs {
+                  release {
+                      def source = System.getenv('AZ_RELEASE_STORE_FILE')
+                      if (source != null && source.trim()) {
+                          storeFile file(source)
+                          storePassword System.getenv('AZ_RELEASE_STORE_PASSWORD')
+                          keyAlias System.getenv('AZ_RELEASE_KEY_ALIAS')
+                          keyPassword System.getenv('AZ_RELEASE_KEY_PASSWORD')
+                      }
+                  }
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      signingConfig signingConfigs.release
+                  }
               }
 
               compileOptions {
@@ -396,6 +415,46 @@ jobs:
 
       - name: APK erstellen
         run: gradle --no-daemon assembleDebug
+
+      - name: Signierte Release-APK erstellen, falls Schlüssel vorhanden
+        id: signing
+        shell: bash
+        env:
+          AZ_RELEASE_KEYSTORE_BASE64: ${{ secrets.AZ_RELEASE_KEYSTORE_BASE64 }}
+          AZ_RELEASE_STORE_PASSWORD: ${{ secrets.AZ_RELEASE_STORE_PASSWORD }}
+          AZ_RELEASE_KEY_ALIAS: ${{ secrets.AZ_RELEASE_KEY_ALIAS }}
+          AZ_RELEASE_KEY_PASSWORD: ${{ secrets.AZ_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${AZ_RELEASE_KEYSTORE_BASE64}" && -z "${AZ_RELEASE_STORE_PASSWORD}" && -z "${AZ_RELEASE_KEY_ALIAS}" && -z "${AZ_RELEASE_KEY_PASSWORD}" ]]; then
+            echo "Kein Release-Schlüssel konfiguriert: nur Debug-APK."
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if [[ -z "${AZ_RELEASE_KEYSTORE_BASE64}" || -z "${AZ_RELEASE_STORE_PASSWORD}" || -z "${AZ_RELEASE_KEY_ALIAS}" || -z "${AZ_RELEASE_KEY_PASSWORD}" ]]; then
+            echo "::error::Release-Secrets sind unvollständig. Bitte alle vier konfigurieren."
+            exit 1
+          fi
+          umask 077
+          export AZ_RELEASE_STORE_FILE="${RUNNER_TEMP}/arbeitszeit-release.jks"
+          printf '%s' "${AZ_RELEASE_KEYSTORE_BASE64}" | base64 --decode > "${AZ_RELEASE_STORE_FILE}"
+          test -s "${AZ_RELEASE_STORE_FILE}"
+          gradle --no-daemon assembleRelease
+          test -s app/build/outputs/apk/release/app-release.apk
+          "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
+          sha256sum app/build/outputs/apk/release/app-release.apk > release-sha256.txt
+          echo "ready=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Signierte Release-APK bereitstellen
+        if: steps.signing.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 1
+          name: Arbeitszeit-30-RELEASE-SIGNED
+          path: |
+            app/build/outputs/apk/release/app-release.apk
+            release-sha256.txt
+          if-no-files-found: error
 
       - name: APK überprüfen
         run: test -s app/build/outputs/apk/debug/app-debug.apk
