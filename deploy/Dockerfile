@@ -9,7 +9,9 @@ RUN groupadd --gid 10001 arbeitszeit \
     && mkdir -p /srv/app /data /backups \
     && chown -R 10001:10001 /srv/app /data /backups
 WORKDIR /srv/app
-COPY --chown=10001:10001 server.py backup.py /srv/app/
+COPY --chown=10001:10001 requirements.txt /srv/app/requirements.txt
+RUN python -m pip install --no-cache-dir -r /srv/app/requirements.txt
+COPY --chown=10001:10001 server.py backup.py reports.py /srv/app/
 COPY --chown=10001:10001 static/ /srv/app/static/
 USER 10001:10001
 EXPOSE 8000
