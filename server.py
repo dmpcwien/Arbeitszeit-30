@@ -459,13 +459,19 @@ def csv_safe_cell(value):
     return text
 
 
-def team_status_page(db, user):
+def team_status_page(db, user, status_filter='all'):
     """Show active punch states to administration, not a location/attendance claim."""
     if user['role'] == 'employee':
         raise PermissionError('Nur die Verwaltung darf den Teamstatus sehen.')
     members = db.execute(
         'SELECT id,name FROM users WHERE active=1 ORDER BY name'
     ).fetchall()
+    if status_filter not in ('all', 'working', 'paused', 'absent'):
+        status_filter = 'all'
+    filter_options = ''.join(
+        f'<option value="{value}" {"selected" if value==status_filter else ""}>{label}</option>'
+        for value,label in [('all','Alle'),('working','Im Dienst'),
+                            ('paused','In Pause'),('absent','Nicht eingestempelt')])
     rows = '<tr><th>Mitarbeiter</th><th>Status</th><th>Beginn</th><th>Netto bisher</th></tr>'
     working = paused = not_punched = 0
     for member in members:
@@ -483,6 +489,9 @@ def team_status_page(db, user):
                 status = 'Im Dienst'
             started = local(shift['started_at'])
             minutes = fmt_minutes(shift_minutes(db, shift)[0])
+        row_state = 'absent' if not shift else ('paused' if brk else 'working')
+        if status_filter != 'all' and row_state != status_filter:
+            continue
         rows += (f'<tr><td>{esc(member["name"])}</td><td>{esc(status)}</td>'
                  f'<td>{esc(started)}</td><td>{esc(minutes)}</td></tr>')
     total = len(members)
@@ -492,6 +501,10 @@ def team_status_page(db, user):
             f'<section class="card"><h2>Nicht eingestempelt</h2><div class="metric">{not_punched}</div></section>'
             f'</div><section class="card"><div class="bar"><h2>Alle aktiven Konten ({total})</h2>'
             f'<a class="btn subtle" href="/team">Aktualisieren</a></div>'
+            f'<form action="/team" method="GET" class="bar">'
+            f'<label for="status-filter">Statusfilter</label><select id="status-filter" '
+            f'name="status" style="max-width:240px">{filter_options}</select>'
+            '<button>Filtern</button></form>'
             f'<p class="small muted">Stand: {esc(datetime.now(VIENNA).strftime("%d.%m.%Y %H:%M"))} Uhr. '
             f'Angezeigt wird der Buchungsstatus, keine Standort- oder Anwesenheitsprüfung.</p>'
             f'<div class="tablewrap"><table class="table">{rows}</table></div></section>')
@@ -919,7 +932,7 @@ class Handler(BaseHTTPRequestHandler):
                 month=params.get('month',[datetime.now(VIENNA).strftime('%Y-%m')])[0]
                 self.send_html(layout('Zeiten',records_page(db,user,csrf,month),user,csrf));return
             if path=='/team' and user['role']!='employee':
-                self.send_html(layout('Teamstatus',team_status_page(db,user),user,csrf));return
+                self.send_html(layout('Teamstatus',team_status_page(db,user,params.get('status',['all'])[0]),user,csrf));return
             if path=='/admin' and user['role']!='employee':
                 self.send_html(layout('Verwaltung',admin_page(db,user,csrf),user,csrf));return
             if path=='/access' and user['role']=='superadmin':
