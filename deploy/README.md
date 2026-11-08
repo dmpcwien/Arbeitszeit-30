@@ -9,11 +9,18 @@ Dienstgeber die Verwendung beurteilt und genehmigt haben.
 - Docker-Port nur an `127.0.0.1:8000` des Hosts gebunden
 - Davor: von der IT betriebener HTTPS-Reverse-Proxy mit TLS-Zertifikat
 - Dauerhafte SQLite-Daten in dem Docker-Volume `arbeitszeit_db`
+- Backup-Sidecar mit separatem Volume `arbeitszeit_backup`, täglich lokal
+  ein SQLite-Backup mit Integritätsprüfung, maximal 30 Snapshots
 - IP-Filterung serverseitig; Proxy muss `X-Real-IP` selbst ueberschreiben
 - Android APK ist nur ein WebView-Client fuer die von der IT freigegebene URL
 
-Die Konfiguration stellt weder MFA, SSO, automatische Offsite-Backups noch
-eine datenschutzrechtliche oder arbeitsrechtliche Freigabe bereit.
+Die Anwendung bietet TOTP-MFA; `APP_REQUIRE_ADMIN_MFA=1` ist in der
+Docker-Vorlage aktiviert. Ein Uni-SSO, automatisierte Offsite-Backups,
+Verschlüsselung der Backup-Dateien durch die Anwendung sowie eine
+datenschutzrechtliche oder arbeitsrechtliche Freigabe sind nicht enthalten.
+Die IT muss insbesondere für *verschlüsselte Datenträger/Volumes*,
+überwachte externe Sicherungen und eine getestete Wiederherstellung sorgen.
+Beim Verlust des TOTP-Geräts ist ein dokumentiertes IT-Verfahren erforderlich.
 
 ## Einmalige Installation durch die IT
 
@@ -46,7 +53,8 @@ nicht auf Produktivdaten angewendet werden.
 
 - Beauftragte Person/Abteilung, Betriebsrat, Datenschutzverantwortliche
 - Zugriffskonzept nach Rollen, Genehmigung der Teamstatus-Anzeige
-- Authentifizierung inklusive MFA-/SSO-Anforderung der Uni
+- Authentifizierung inklusive verpflichtender Admin-MFA, verwalteter
+  Wiederherstellung bei Geräteverlust und SSO-Anforderung der Uni
 - Mitarbeitenden-Information, Zweckbindung, Speicherdauer, Auskunft
 - Freigabe des Quellcodes und der eingesetzten Python-/Docker-Basisimages
 - Zertifikatsverwaltung, HTTPS, Firewall, Netzsegmentierung, Reverse-Proxy
