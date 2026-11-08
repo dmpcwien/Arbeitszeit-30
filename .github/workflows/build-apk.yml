@@ -22,8 +22,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: PDF-Abhängigkeit installieren
+        run: python -m pip install -r requirements.txt
+
       - name: Python-Quellcode kompilieren
-        run: python -m compileall -q server.py backup.py tests
+        run: python -m compileall -q server.py backup.py reports.py tests
 
       - name: Backend-Tests ausführen
         run: python -m unittest discover -s tests -v
@@ -90,8 +93,8 @@ jobs:
                   applicationId 'at.arbeitszeit.zeitkonto'
                   minSdk 26
                   targetSdk 34
-                  versionCode 19
-                  versionName '1.9.0'
+                  versionCode 20
+                  versionName '1.10.0'
               }
 
               compileOptions {
