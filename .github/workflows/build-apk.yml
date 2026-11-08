@@ -90,8 +90,8 @@ jobs:
                   applicationId 'at.arbeitszeit.zeitkonto'
                   minSdk 26
                   targetSdk 34
-                  versionCode 18
-                  versionName '1.8.0'
+                  versionCode 19
+                  versionName '1.9.0'
               }
 
               compileOptions {
@@ -130,7 +130,9 @@ jobs:
           import android.net.Uri;
           import android.os.Bundle;
           import android.view.ViewGroup;
+          import android.view.View;
           import android.webkit.WebResourceRequest;
+          import android.webkit.WebResourceError;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
@@ -249,9 +251,23 @@ jobs:
                   settings.setOnClickListener(v -> setup(base));
                   layout.addView(settings);
 
+                  TextView connectionHint = new TextView(this);
+                  connectionHint.setTextColor(Color.rgb(142, 37, 45));
+                  connectionHint.setTextSize(14);
+                  connectionHint.setPadding(6, 12, 6, 12);
+                  connectionHint.setVisibility(View.GONE);
+                  layout.addView(connectionHint);
+
+                  Button refresh = new Button(this);
+                  refresh.setText("Erneut verbinden");
+                  refresh.setOnClickListener(v -> {
+                      if (web != null) web.reload();
+                  });
+                  layout.addView(refresh);
+
                   web = new WebView(this);
                   WebSettings ws = web.getSettings();
-                  ws.setJavaScriptEnabled(false);
+                  ws.setJavaScriptEnabled(true);
                   ws.setAllowFileAccess(false);
                   ws.setAllowContentAccess(false);
                   ws.setMixedContentMode(
@@ -260,6 +276,19 @@ jobs:
                   ws.setSafeBrowsingEnabled(true);
 
                   web.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
+                          connectionHint.setVisibility(View.GONE);
+                      }
+                      @Override
+                      public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                          if (request.isForMainFrame()) {
+                              connectionHint.setText(
+                                  "Server momentan nicht erreichbar. Keine Buchung wurde lokal gespeichert."
+                              );
+                              connectionHint.setVisibility(View.VISIBLE);
+                          }
+                      }
                       @Override
                       public boolean shouldOverrideUrlLoading(
                           WebView view, WebResourceRequest r
