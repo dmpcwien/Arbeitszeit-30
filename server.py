@@ -370,6 +370,13 @@ def review_correction(db, actor, request_id, decision, reviewer_note):
         raise ValueError('Eigene Anträge dürfen nicht selbst freigegeben werden.')
     if request['requester_role'] == 'superadmin' and actor['role'] != 'superadmin':
         raise PermissionError('Keine Berechtigung für Superadministrator-Anträge.')
+    # Status-Reservierung und Schichtänderung erfolgen in einer Transaktion.
+    updated = db.execute(
+        'UPDATE correction_requests SET status=?,reviewed_at=?,reviewed_by=?,'
+        "reviewer_note=? WHERE id=? AND status='pending'",
+        (decision, utc_now(), actor['id'], reviewer_note, request_id))
+    if updated.rowcount != 1:
+        raise ValueError('Der Antrag wurde zwischenzeitlich bearbeitet.')
     if decision == 'approved':
         sh = None
         if request['shift_id']:
@@ -388,9 +395,6 @@ def review_correction(db, actor, request_id, decision, reviewer_note):
                        'VALUES(?,?,?,?,?)',
                        (request['requester_id'], request['requested_start'],
                         request['requested_end'], utc_now(), actor['id']))
-    db.execute('UPDATE correction_requests SET status=?,reviewed_at=?,reviewed_by=?,'
-               'reviewer_note=? WHERE id=? AND status=?',
-               (decision, utc_now(), actor['id'], reviewer_note, request_id, 'pending'))
     audit(db, actor['id'], 'correction_' + decision, f'correction:{request_id}',
           (request['reason'] + ' | ' + reviewer_note)[:500])
 
@@ -1028,7 +1032,7 @@ class Handler(BaseHTTPRequestHandler):
                         number=Decimal(raw)
                     except InvalidOperation:
                         raise ValueError('Ungültige Sollzeit.')
-                    if not number.is_finite() or number<0 or number>60 or (number*4)!=number.__mul__(4).to_integral_value():
+                    if not number.is_finite() or number < 0 or number > 60 or number * 4 != (number * 4).to_integral_value():
                         raise ValueError('Sollzeit zwischen 0 und 60 Stunden in Viertelstundenschritten eingeben.')
                     minutes=int(number*60)
                     db.execute('UPDATE users SET weekly_target_minutes=? WHERE id=?',
@@ -1091,6 +1095,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.redirect('/records');return
                 self.send_html(layout('Nicht gefunden','Aktion nicht gefunden.',user,user['csrf']),404);return
             except (ValueError,PermissionError,sqlite3.IntegrityError) as exc:
+                db.rollback()
                 msg='Dieses Benutzerkonto existiert möglicherweise bereits.' if isinstance(exc,sqlite3.IntegrityError) else str(exc)
                 self.send_html(layout('Eingabe prüfen',f'<section class="card"><h2>Aktion nicht möglich</h2><p class="flash err">{esc(msg)}</p><p><a href="/">Zur Stempeluhr</a> · <a href="/admin">Zur Verwaltung</a></p></section>',user,user['csrf']),400)
 
