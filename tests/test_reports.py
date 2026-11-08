@@ -33,6 +33,9 @@ class ReportsTests(unittest.TestCase):
                              "Mitarbeiter & <Test>")
             d4 = xml.find(".//m:c[@r='D4']/m:v", namespaces=ns)
             self.assertEqual(d4.text, "30")
+            f4 = xml.find(".//m:c[@r='F4']", namespaces=ns)
+            self.assertEqual(f4.attrib["s"], "3")
+            self.assertEqual(f4.find("m:v", namespaces=ns).text, "8.00")
 
     def test_pdf_has_header_and_valid_signature(self):
         blob = make_pdf(self.records, "2026-11")
