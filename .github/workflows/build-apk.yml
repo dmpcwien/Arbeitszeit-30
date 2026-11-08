@@ -29,7 +29,19 @@ jobs:
         run: python -m compileall -q server.py backup.py reports.py tests
 
       - name: Backend-Tests ausführen
-        run: python -m unittest discover -s tests -v
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -v 2>&1 | tee test-results.txt
+
+      - name: Testprotokoll bereitstellen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 1
+          name: Arbeitszeit-30-Testprotokoll
+          path: test-results.txt
+          if-no-files-found: ignore
 
       - name: Java 17 installieren
         uses: actions/setup-java@v4
