@@ -143,6 +143,62 @@ class MehrbenutzerHttpTests(unittest.TestCase):
         self.assertNotIn("Testperson A", b_export)
         self.assertIn("Testperson B", b_export)
 
+    def test_mfa_enrollment_and_second_factor_login(self):
+        a = self.login("a@example.invalid")
+        status, _ = self.request(a, "/mfa-start", {"csrf": self.csrf("a@example.invalid")})
+        self.assertEqual(status, 200)
+        with app.conn() as db:
+            user = db.execute("SELECT * FROM users WHERE email=?", ("a@example.invalid",)).fetchone()
+            secret = user["mfa_pending_secret"]
+            self.assertIsNotNone(secret)
+            self.assertIsNone(user["mfa_secret"])
+        status, _ = self.request(a, "/mfa-confirm",
+                                 {"csrf": self.csrf("a@example.invalid"),
+                                  "code": app.totp_code(secret)})
+        self.assertEqual(status, 200)
+        with app.conn() as db:
+            user = db.execute("SELECT * FROM users WHERE email=?", ("a@example.invalid",)).fetchone()
+            self.assertEqual(user["mfa_secret"], secret)
+            self.assertIsNone(user["mfa_pending_secret"])
+        no_code = self.new_client()
+        status, page = self.request(no_code, "/login",
+                                    {"email": "a@example.invalid",
+                                     "password": self.passwords["a@example.invalid"]})
+        self.assertEqual(status, 401)
+        self.assertIn("Anmeldung fehlgeschlagen", page)
+        with_code = self.new_client()
+        status, page = self.request(with_code, "/login",
+                                    {"email": "a@example.invalid",
+                                     "password": self.passwords["a@example.invalid"],
+                                     "code": app.totp_code(secret)})
+        self.assertEqual(status, 200)
+        self.assertIn("Meine Stempeluhr", page)
+
+    def test_admin_mfa_guard_when_required(self):
+        previous = app.REQUIRE_ADMIN_MFA
+        try:
+            app.REQUIRE_ADMIN_MFA = True
+            admin = self.login("admin@example.invalid")
+            status, page = self.request(admin, "/admin")
+            self.assertEqual(status, 200)
+            self.assertIn("Für die Verwaltung ist MFA erforderlich", page)
+            self.assertNotIn("Neuen Zugang erstellen", page)
+            status, _ = self.request(admin, "/mfa-start",
+                                     {"csrf": self.csrf("admin@example.invalid")})
+            self.assertEqual(status, 200)
+            with app.conn() as db:
+                secret = db.execute("SELECT mfa_pending_secret FROM users WHERE email=?",
+                                    ("admin@example.invalid",)).fetchone()[0]
+            status, _ = self.request(admin, "/mfa-confirm",
+                                     {"csrf": self.csrf("admin@example.invalid"),
+                                      "code": app.totp_code(secret)})
+            self.assertEqual(status, 200)
+            status, page = self.request(admin, "/admin")
+            self.assertEqual(status, 200)
+            self.assertIn("Neuen Zugang erstellen", page)
+        finally:
+            app.REQUIRE_ADMIN_MFA = previous
+
     def test_csrf_is_required_and_deactivation_revokes_session(self):
         employee_a = self.login("a@example.invalid")
         admin = self.login("admin@example.invalid")
