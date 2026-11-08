@@ -6,12 +6,17 @@ Interne Zeiterfassung als Übergangslösung für bis zu 30 aktive Konten in VZA7
 Die App erfasst **gebuchte** Arbeitszeiten, Pausen und Korrekturen. Sie ist
 **kein** automatischer Anwesenheitsnachweis und keine fertige Lohnabrechnung.
 
-## Funktionen (v1.8 – schrittweiser Ausbau)
+## Funktionen (v1.10 – schrittweiser Ausbau)
 
 - Stempelaktionen: Arbeitsbeginn, Pause starten/beenden, Feierabend
 - Serverseitig idempotente Stempelvorgänge bei erneut gesendeten Formularen
 - Eigenes Wochen-Soll-/Ist-Stundenkonto (durch Administrator konfigurierbar)
 - Tages-, Wochen- und Monatsübersicht sowie persönlicher Monatskalender
+- Sekündlich aktualisierte Anzeige der laufenden Nettozeit im sichtbaren Dashboard,
+  ohne regelmäßige Netzwerk-Abfragen und ohne Hintergrundaktivität
+- Monatsbericht als CSV, PDF oder Excel (.xlsx); keine dauerhafte Dateiablage am Server
+- Im Android-Client: genehmigte Berichtdownloads, Netzwerkfehler-Anzeige und
+  Schaltfläche zum erneuten Laden
 - Korrekturanträge durch Mitarbeiter mit separater Admin-Freigabe und Auditspur
 - Pausenhinweise und sichtbarer Status offener Korrekturanträge
 - Automatischer Hell-/Dunkelmodus anhand des Geräts
@@ -33,7 +38,11 @@ Repository gehören. Die tatsächlichen Rechte werden serverseitig geprüft.
 
 ## Lokaler Test (Python 3.10+)
 
-Keine externen Python-Abhängigkeiten erforderlich.
+Die Web-/Backend-Anwendung benötigt Python 3.12 sowie die PDF-Bibliothek
+aus requirements.txt. Die Excel-Ausgabe verwendet ausschließlich
+Python-Standardbibliotheken.
+
+    python -m pip install -r requirements.txt
 
     python -m unittest discover -s tests -v
 
@@ -81,7 +90,7 @@ wäre eine professionelle Server-/Datenbanklösung erforderlich.
 
 Die Tests unter tests/ überprüfen auch TOTP-Anmeldung und Pflicht-MFA,
 Korrekturen, Datenbankmigration, Rücksicherung eines Datenbank-Snapshots,
-Monatskalender und idempotente Buchungen.
+Monatskalender, Live-Zeitanzeige, Berichtexporte und idempotente Buchungen.
 
 Die Testdatei tests/test_http_integration.py simuliert drei unabhängige Konten
 in einem lokalen HTTP-Server mit temporärer Datenbank. Sie überprüft Login,
@@ -91,8 +100,9 @@ Es werden keine produktiven Benutzer oder echten Universitätsserver verwendet.
 
 ## Android-APK
 
-Der GitHub-Actions-Workflow build-apk.yml prüft zuerst Python-Syntax und Tests und
-baut anschließend eine **Debug-APK** (Version 1.8.0). Das APK-Artefakt heißt
+Der GitHub-Actions-Workflow build-apk.yml installiert die PDF-Bibliothek,
+prüft Python-Syntax und Regressionstests und baut anschließend eine
+**Debug-APK** (Version 1.10.0). Das APK-Artefakt heißt
 Arbeitszeit-30-APK und wird nach **einem Tag** automatisch aus Actions
 entfernt. Die App verlangt beim ersten Start die HTTPS-Adresse des bereits
 bereitgestellten Servers.
