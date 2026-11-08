@@ -183,9 +183,33 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS shifts_user_date ON shifts(user_id, started_at);
         CREATE INDEX IF NOT EXISTS audit_created ON audit(created_at);
+        CREATE TABLE IF NOT EXISTS correction_requests (
+            id INTEGER PRIMARY KEY,
+            requester_id INTEGER NOT NULL REFERENCES users(id),
+            shift_id INTEGER REFERENCES shifts(id),
+            requested_start TEXT NOT NULL,
+            requested_end TEXT NOT NULL,
+            original_start TEXT, original_end TEXT,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(status IN ('pending','approved','rejected')),
+            created_at TEXT NOT NULL,
+            reviewed_at TEXT,
+            reviewed_by INTEGER REFERENCES users(id),
+            reviewer_note TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS corrections_status_created
+            ON correction_requests(status,created_at);
         ''')
         if 'remote_until' not in {r['name'] for r in db.execute('PRAGMA table_info(users)')}:
             db.execute('ALTER TABLE users ADD COLUMN remote_until INTEGER NOT NULL DEFAULT 0')
+        user_columns = {r['name'] for r in db.execute('PRAGMA table_info(users)')}
+        if 'weekly_target_minutes' not in user_columns:
+            db.execute('ALTER TABLE users ADD COLUMN weekly_target_minutes INTEGER NOT NULL DEFAULT 0')
+        if 'mfa_secret' not in user_columns:
+            db.execute('ALTER TABLE users ADD COLUMN mfa_secret TEXT')
+        if 'mfa_pending_secret' not in user_columns:
+            db.execute('ALTER TABLE users ADD COLUMN mfa_pending_secret TEXT')
 
 
 def audit(db, actor_id, action, target, note=''):
@@ -264,6 +288,159 @@ def shift_minutes(db, shift, now=None):
 
 def fmt_minutes(m):
     return f'{m // 60}:{m % 60:02d} h'
+
+
+
+def validate_shift_correction(db, user_id, start, end, shift_id=None):
+    """Validate submitted or approved corrections against current records."""
+    a, b = parse_dt(start), parse_dt(end)
+    if b <= a or (b - a).total_seconds() > 48 * 3600:
+        raise ValueError('Zeitraum muss positiv und höchstens 48 Stunden lang sein.')
+    if b > datetime.now(UTC) + timedelta(minutes=5):
+        raise ValueError('Buchungen in der Zukunft sind nicht möglich.')
+    if shift_id:
+        sh = db.execute('SELECT * FROM shifts WHERE id=? AND user_id=?',
+                        (shift_id, user_id)).fetchone()
+        if not sh or not sh['ended_at']:
+            raise ValueError('Nur abgeschlossene eigene Schichten können korrigiert werden.')
+        for brk in db.execute('SELECT * FROM breaks WHERE shift_id=?', (shift_id,)):
+            if not brk['ended_at'] or parse_dt(brk['started_at']) < a or parse_dt(brk['ended_at']) > b:
+                raise ValueError('Eine vorhandene Pause liegt außerhalb des neuen Zeitraums.')
+    for other in db.execute('SELECT * FROM shifts WHERE user_id=? AND id<>?',
+                            (user_id, shift_id or -1)):
+        other_end = parse_dt(other['ended_at'] or utc_now())
+        if a < other_end and b > parse_dt(other['started_at']):
+            raise ValueError('Die beantragte Zeit überschneidet eine andere Schicht.')
+
+
+def submit_correction(db, actor, shift_id, start_text, end_text, reason):
+    reason = reason.strip()
+    if not 8 <= len(reason) <= 500:
+        raise ValueError('Bitte eine Begründung mit 8 bis 500 Zeichen angeben.')
+    start, end = from_local_input(start_text), from_local_input(end_text)
+    shift = None
+    if shift_id:
+        shift = db.execute('SELECT * FROM shifts WHERE id=? AND user_id=?',
+                           (shift_id, actor['id'])).fetchone()
+        if not shift:
+            raise ValueError('Eigene Buchung nicht gefunden.')
+        duplicate = db.execute(
+            "SELECT 1 FROM correction_requests WHERE shift_id=? AND status='pending'",
+            (shift_id,)).fetchone()
+        if duplicate:
+            raise ValueError('Für diese Buchung besteht bereits ein offener Antrag.')
+    validate_shift_correction(db, actor['id'], start, end, shift_id or None)
+    if not shift_id and db.execute(
+        "SELECT 1 FROM correction_requests WHERE requester_id=? AND shift_id IS NULL"
+        " AND requested_start=? AND status='pending'", (actor['id'], start)
+    ).fetchone():
+        raise ValueError('Ein entsprechender Antrag ist bereits offen.')
+    cur = db.execute(
+        'INSERT INTO correction_requests(requester_id,shift_id,requested_start,'
+        'requested_end,original_start,original_end,reason,created_at) '
+        'VALUES(?,?,?,?,?,?,?,?)',
+        (actor['id'], shift_id or None, start, end,
+         shift['started_at'] if shift else None,
+         shift['ended_at'] if shift else None, reason, utc_now()))
+    audit(db, actor['id'], 'correction_requested', f'correction:{cur.lastrowid}',
+          'Schichtkorrektur' if shift else 'Nachtrag eines Arbeitstags')
+    return cur.lastrowid
+
+
+def review_correction(db, actor, request_id, decision, reviewer_note):
+    if actor['role'] == 'employee':
+        raise PermissionError('Keine Berechtigung zur Freigabe.')
+    if decision not in ('approved', 'rejected'):
+        raise ValueError('Ungültige Entscheidung.')
+    reviewer_note = reviewer_note.strip()
+    if decision == 'rejected' and len(reviewer_note) < 5:
+        raise ValueError('Für die Ablehnung eine Begründung angeben.')
+    if len(reviewer_note) > 500:
+        raise ValueError('Kommentar ist zu lang.')
+    request = db.execute(
+        'SELECT correction_requests.*, users.role AS requester_role '
+        'FROM correction_requests JOIN users ON users.id=correction_requests.requester_id '
+        'WHERE correction_requests.id=?', (request_id,)).fetchone()
+    if not request or request['status'] != 'pending':
+        raise ValueError('Antrag nicht gefunden oder bereits bearbeitet.')
+    if actor['id'] == request['requester_id']:
+        raise ValueError('Eigene Anträge dürfen nicht selbst freigegeben werden.')
+    if request['requester_role'] == 'superadmin' and actor['role'] != 'superadmin':
+        raise PermissionError('Keine Berechtigung für Superadministrator-Anträge.')
+    if decision == 'approved':
+        sh = None
+        if request['shift_id']:
+            sh = db.execute('SELECT * FROM shifts WHERE id=? AND user_id=?',
+                            (request['shift_id'], request['requester_id'])).fetchone()
+            if not sh or sh['started_at'] != request['original_start'] or sh['ended_at'] != request['original_end']:
+                raise ValueError('Die Ursprungsbuchung wurde verändert. Bitte neuen Antrag stellen.')
+        validate_shift_correction(db, request['requester_id'], request['requested_start'],
+                                  request['requested_end'], request['shift_id'])
+        if sh:
+            db.execute('UPDATE shifts SET started_at=?,ended_at=?,edited_at=?,edited_by=? '
+                       'WHERE id=?', (request['requested_start'], request['requested_end'],
+                                     utc_now(), actor['id'], sh['id']))
+        else:
+            db.execute('INSERT INTO shifts(user_id,started_at,ended_at,edited_at,edited_by) '
+                       'VALUES(?,?,?,?,?)',
+                       (request['requester_id'], request['requested_start'],
+                        request['requested_end'], utc_now(), actor['id']))
+    db.execute('UPDATE correction_requests SET status=?,reviewed_at=?,reviewed_by=?,'
+               'reviewer_note=? WHERE id=? AND status=?',
+               (decision, utc_now(), actor['id'], reviewer_note, request_id, 'pending'))
+    audit(db, actor['id'], 'correction_' + decision, f'correction:{request_id}',
+          (request['reason'] + ' | ' + reviewer_note)[:500])
+
+
+def corrections_page(db, user, csrf, selected_shift_id=0):
+    shift = db.execute('SELECT * FROM shifts WHERE id=? AND user_id=? AND ended_at IS NOT NULL',
+                       (selected_shift_id, user['id'])).fetchone()
+    original_start = to_local_input(shift['started_at']) if shift else ''
+    original_end = to_local_input(shift['ended_at']) if shift else ''
+    shift_info = (f'<p>Korrektur für Buchung #{shift["id"]} · '
+                  f'<a href="/corrections">Stattdessen neuen Arbeitstag nachtragen</a></p>'
+                  if shift else '<p>Neuen, vergessenen Arbeitstag beantragen.</p>')
+    form = (f'<section class="card"><h2>Korrektur beantragen</h2>{shift_info}'
+            f'<form method="POST" action="/request-correction">{csrf_input(csrf)}'
+            f'<input type="hidden" name="shift_id" value="{shift["id"] if shift else 0}">'
+            f'<label>Beginn</label><input type="datetime-local" name="start" value="{esc(original_start)}" required>'
+            f'<label>Ende</label><input type="datetime-local" name="end" value="{esc(original_end)}" required>'
+            f'<label>Begründung</label><textarea name="reason" minlength="8" maxlength="500" required></textarea>'
+            '<p><button>Antrag absenden</button></p></form></section>')
+    my_rows = '<tr><th>Beantragt am</th><th>Zeitraum</th><th>Status</th><th>Begründung</th></tr>'
+    statuses = {'pending': 'Offen', 'approved': 'Genehmigt', 'rejected': 'Abgelehnt'}
+    for r in db.execute('SELECT * FROM correction_requests WHERE requester_id=? '
+                        'ORDER BY id DESC LIMIT 100', (user['id'],)):
+        my_rows += (f'<tr><td>{local(r["created_at"])}</td>'
+                    f'<td>{local(r["requested_start"])} – {local(r["requested_end"])}</td>'
+                    f'<td>{statuses.get(r["status"], "–")}</td>'
+                    f'<td>{esc(r["reason"])}</td></tr>')
+    review_section = ''
+    if user['role'] != 'employee':
+        queue = '<tr><th>Person</th><th>Zeitraum</th><th>Begründung</th><th>Entscheidung</th></tr>'
+        pending = db.execute('SELECT c.*,u.name,u.role FROM correction_requests c '
+                             'JOIN users u ON u.id=c.requester_id WHERE c.status=? '
+                             'ORDER BY c.id ASC LIMIT 100', ('pending',)).fetchall()
+        for req in pending:
+            if req['requester_id'] == user['id']:
+                continue
+            if req['role'] == 'superadmin' and user['role'] != 'superadmin':
+                continue
+            controls = (f'<form method="POST" action="/review-correction">'
+                        f'{csrf_input(csrf)}<input type="hidden" name="request_id" value="{req["id"]}">'
+                        '<label>Kommentar (bei Ablehnung erforderlich)</label>'
+                        '<input name="note" maxlength="500">'
+                        '<div class="buttons"><button name="decision" value="approved">Genehmigen</button>'
+                        '<button name="decision" value="rejected" class="danger">Ablehnen</button></div></form>')
+            queue += (f'<tr><td>{esc(req["name"])}</td>'
+                      f'<td>{local(req["requested_start"])} – {local(req["requested_end"])}</td>'
+                      f'<td>{esc(req["reason"])}</td><td>{controls}</td></tr>')
+        review_section = ('<section class="card"><h2>Offene Anträge prüfen</h2>'
+                          f'<div class="tablewrap"><table class="table">{queue}</table></div></section>')
+    return ('<h2>Zeiten korrigieren</h2>' + form +
+            '<section class="card"><h2>Meine Anträge</h2>'
+            f'<div class="tablewrap"><table class="table">{my_rows}</table></div></section>' +
+            review_section)
 
 
 def csv_safe_cell(value):
