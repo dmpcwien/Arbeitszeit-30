@@ -14,6 +14,7 @@ services:
     environment:
       APP_DATA_DIR: "/data"
       APP_SECURE_COOKIES: "1"
+      APP_REQUIRE_ADMIN_MFA: "1"
       APP_SUPER_EMAIL: "${APP_SUPER_EMAIL:?Superadmin-Mailadresse eintragen}"
       APP_ADMIN_EMAIL: "${APP_ADMIN_EMAIL:?Admin-Mailadresse eintragen}"
       APP_ADMIN_NAME: "${APP_ADMIN_NAME:-Administrator}"
@@ -31,5 +32,31 @@ services:
     pids_limit: 100
     mem_limit: 256m
 
+  backup:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: arbeitszeit30:local
+    restart: unless-stopped
+    init: true
+    network_mode: "none"
+    command: ["python", "backup.py", "--loop"]
+    environment:
+      APP_DATA_DIR: "/data"
+      APP_BACKUP_DIR: "/backups"
+    volumes:
+      - arbeitszeit_db:/data:ro
+      - arbeitszeit_backup:/backups
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 50
+    mem_limit: 128m
+
 volumes:
   arbeitszeit_db:
+  arbeitszeit_backup:
