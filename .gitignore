@@ -18,3 +18,12 @@ app/build/
 .idea/
 *.apk
 *.aab
+
+# Release-Schlüssel und versehentliche Testartefakte niemals committen.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+.demo-data/
+.local-demo/
