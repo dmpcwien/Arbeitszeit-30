@@ -9,7 +9,7 @@ RUN groupadd --gid 10001 arbeitszeit \
     && mkdir -p /srv/app /data \
     && chown -R 10001:10001 /srv/app /data
 WORKDIR /srv/app
-COPY --chown=10001:10001 server.py /srv/app/server.py
+COPY --chown=10001:10001 server.py backup.py /srv/app/
 USER 10001:10001
 EXPOSE 8000
 CMD ["python", "server.py", "serve", "--host", "0.0.0.0", "--port", "8000"]
