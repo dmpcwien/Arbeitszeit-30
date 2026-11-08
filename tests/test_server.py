@@ -83,6 +83,69 @@ class ArbeitszeitTests(unittest.TestCase):
         self.assertEqual(app.csv_safe_cell("Normaler Name"), "Normaler Name")
         self.assertEqual(app.csv_safe_cell(None), "")
 
+    def test_totp_rfc_vector_and_wrong_code(self):
+        import base64
+        secret = base64.b32encode(b"12345678901234567890").decode("ascii").rstrip("=")
+        self.assertEqual(app.totp_code(secret, at_time=59), "287082")
+        self.assertTrue(app.verify_totp(secret, "287082", at_time=59))
+        self.assertFalse(app.verify_totp(secret, "000000", at_time=59))
+        self.assertFalse(app.verify_totp(secret, "invalid", at_time=59))
+
+    def test_migration_preserves_existing_hours(self):
+        with app.conn() as db:
+            worker, _ = self.accounts(db)
+            db.execute("INSERT INTO shifts(user_id,started_at,ended_at) VALUES(?,?,?)",
+                       (worker["id"], "2026-01-07T08:00:00+00:00",
+                        "2026-01-07T16:00:00+00:00"))
+            count_before = db.execute("SELECT COUNT(*) FROM shifts").fetchone()[0]
+        app.init_db()
+        app.init_db()
+        with app.conn() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM shifts").fetchone()[0], count_before)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+            self.assertIn("weekly_target_minutes", columns)
+            self.assertIn("mfa_secret", columns)
+            self.assertIn("remote_until", columns)
+
+    def test_correction_requires_separate_admin_approval_and_keeps_original(self):
+        with app.conn() as db:
+            worker, admin = self.accounts(db)
+            cur = db.execute("INSERT INTO shifts(user_id,started_at,ended_at) VALUES(?,?,?)",
+                             (worker["id"], "2026-01-08T08:00:00+00:00",
+                              "2026-01-08T16:00:00+00:00"))
+            request_id = app.submit_correction(
+                db, worker, cur.lastrowid, "2026-01-08T10:00",
+                "2026-01-08T18:00", "Fehlende Zeitkorrektur")
+            current = db.execute("SELECT * FROM shifts WHERE id=?", (cur.lastrowid,)).fetchone()
+            self.assertEqual(current["started_at"], "2026-01-08T08:00:00+00:00")
+            with self.assertRaises(ValueError):
+                app.review_correction(db, worker, request_id, "approved", "")
+            app.review_correction(db, admin, request_id, "approved", "Geprüft")
+            new = db.execute("SELECT * FROM shifts WHERE id=?", (cur.lastrowid,)).fetchone()
+            self.assertNotEqual(new["started_at"], current["started_at"])
+            status = db.execute("SELECT status,original_start,reviewed_by FROM correction_requests WHERE id=?",
+                                (request_id,)).fetchone()
+            self.assertEqual(status["status"], "approved")
+            self.assertEqual(status["original_start"], current["started_at"])
+            self.assertEqual(status["reviewed_by"], admin["id"])
+            with self.assertRaises(ValueError):
+                app.review_correction(db, admin, request_id, "approved", "Nochmal")
+
+    def test_correction_rejection_keeps_shift_untouched(self):
+        with app.conn() as db:
+            worker, admin = self.accounts(db)
+            cur = db.execute("INSERT INTO shifts(user_id,started_at,ended_at) VALUES(?,?,?)",
+                             (worker["id"], "2026-01-09T08:00:00+00:00",
+                              "2026-01-09T16:00:00+00:00"))
+            req = app.submit_correction(db, worker, cur.lastrowid,
+                                        "2026-01-09T10:00", "2026-01-09T18:00",
+                                        "Bitte Anfang ändern")
+            with self.assertRaises(ValueError):
+                app.review_correction(db, admin, req, "rejected", "")
+            app.review_correction(db, admin, req, "rejected", "Nicht plausibel")
+            shift = db.execute("SELECT * FROM shifts WHERE id=?", (cur.lastrowid,)).fetchone()
+            self.assertEqual(shift["started_at"], "2026-01-09T08:00:00+00:00")
+
     def test_network_restriction_defaults_to_explicit_ranges(self):
         original = app.UNI_NETWORKS
         try:
