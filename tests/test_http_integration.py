@@ -144,6 +144,31 @@ class MehrbenutzerHttpTests(unittest.TestCase):
         self.assertNotIn("Testperson A", b_export)
         self.assertIn("Testperson B", b_export)
 
+    def test_authenticated_timer_script_and_no_guest_access(self):
+        user = self.login("a@example.invalid")
+        status, script = self.request(user, "/static/dashboard.js")
+        self.assertEqual(status, 200)
+        self.assertIn("live-work-time", script)
+        self.assertIn("visibilitychange", script)
+        guest = self.new_client()
+        status, body = self.request(guest, "/static/dashboard.js")
+        self.assertEqual(status, 200)  # The redirect returns the login page.
+        self.assertIn("Anmelden", body)
+        self.assertNotIn("live-work-time", body)
+
+    def test_retransmitted_clock_in_request_only_creates_one_shift(self):
+        client = self.login("a@example.invalid")
+        csrf = self.csrf("a@example.invalid")
+        token = "persistent_request_key_123456"
+        payload = {"csrf": csrf, "action": "start", "request_id": token}
+        first_status, _ = self.request(client, "/punch", payload)
+        second_status, _ = self.request(client, "/punch", payload)
+        self.assertEqual((first_status, second_status), (200, 200))
+        with app.conn() as db:
+            uid = db.execute("SELECT id FROM users WHERE email='a@example.invalid'").fetchone()[0]
+            count = db.execute("SELECT count(*) FROM shifts WHERE user_id=?", (uid,)).fetchone()[0]
+            self.assertEqual(count, 1)
+
     def test_mfa_enrollment_and_second_factor_login(self):
         a = self.login("a@example.invalid")
         status, _ = self.request(a, "/mfa-start", {"csrf": self.csrf("a@example.invalid")})
